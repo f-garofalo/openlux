@@ -1,0 +1,196 @@
+# OpenLux .gitignore
+
+# =============================================================================
+# SECRETS AND CREDENTIALS
+# =============================================================================
+# DO NOT commit WiFi passwords or OTA passwords!
+src/secrets.h
+
+# =============================================================================
+# PLATFORMIO
+# =============================================================================
+.pio/
+.pioenvs/
+.piolibdeps/
+.vscode/.browse.c_cpp.db*
+.vscode/c_cpp_properties.json
+.vscode/launch.json
+.vscode/ipch
+.cache/
+
+# =============================================================================
+# BUILD ARTIFACTS
+# =============================================================================
+*.o
+*.obj
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+*.sym
+*.lss
+*.eep
+*.srec
+
+# Auto-generated files
+src/build_info.h
+
+# =============================================================================
+# PYTHON
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.venv/
+venv/
+ENV/
+env/
+
+# =============================================================================
+# EDITOR / IDE
+# =============================================================================
+# VSCode
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+
+# JetBrains
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# =============================================================================
+# CODE QUALITY TOOLS
+# =============================================================================
+# clang-tidy temporary files
+.clang-tidy-*
+*.clang-tidy.yaml
+
+# cppcheck reports
+cppcheck-build-dir/
+*.cppcheck
+
+# compile_commands.json (if generated)
+compile_commands.json
+
+# =============================================================================
+# OS SPECIFIC
+# =============================================================================
+# macOS
+.DS_Store
+**/.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+.directory
+.Trash-*
+.nfs*
+
+# =============================================================================
+# LOGS AND TEMPORARY FILES
+# =============================================================================
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+*.cache
+
+# =============================================================================
+# PROJECT SPECIFIC
+# =============================================================================
+# Captures and debugging
+*.pcap
+*.pcapng
+captures/
+debug/
+
+# Local test configurations
+local_config.h
+test_secrets.h
+
+# Generated documentation (if using Doxygen)
+docs/html/
+docs/latex/
+docs/doxygen/
+
+# Backup configurations
+*.h.bak
+*.cpp.bak
+
+# =============================================================================
+# KEEP THESE FILES
+# =============================================================================
+# Examples should be committed
+!src/secrets.h.example
+!**/examples/**/*.h
+
+# Documentation should be committed (except sensitive files)
+!docs/**/*.md
+# But exclude these sensitive docs
+docs/PROTOCOL_DETAILS.md
+!README.md
+!LICENSE
+!CONTRIBUTING.md
+
+# Tools should be committed
+!tools/**

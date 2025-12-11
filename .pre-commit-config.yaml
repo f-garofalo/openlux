@@ -1,0 +1,99 @@
+# Pre-commit hooks configuration for OpenLux
+# See https://pre-commit.com for more information
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^docs/.*\.(jpg|png)$
+      - id: end-of-file-fixer
+        exclude: ^docs/.*\.(jpg|png)$
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Prevent committing sensitive files
+  - repo: local
+    hooks:
+      - id: check-sensitive-files
+        name: Check for sensitive files
+        entry: bash -c
+        args:
+          - |
+            if git diff --cached --name-only | grep -E "(^src/secrets\.h$|PROTOCOL_DETAILS\.md|LEGAL_ANALYSIS\.md|PRE_RELEASE_REPORT\.md|^src/build_info\.h$|\.DS_Store)"; then
+              echo "❌ ERROR: Attempting to commit sensitive files!"
+              echo "Found:"
+              git diff --cached --name-only | grep -E "(^src/secrets\.h$|PROTOCOL_DETAILS\.md|LEGAL_ANALYSIS\.md|PRE_RELEASE_REPORT\.md|^src/build_info\.h$|\.DS_Store)"
+              echo ""
+              echo "These files should never be committed."
+              echo "Run: git reset HEAD <file> to unstage them."
+              exit 1
+            fi
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+  # C++ code formatting with clang-format
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v21.1.7
+    hooks:
+      - id: clang-format
+        name: Format C++ code
+        types_or: [c++, c]
+        args: ['--style=file', '-i']
+        files: ^src/.*\.(cpp|h)$
+
+  # Check if code is properly formatted (fail if not)
+  - repo: local
+    hooks:
+      - id: check-clang-format
+        name: Verify C++ code formatting
+        entry: bash -c
+        args:
+          - |
+            files=$(git diff --cached --name-only --diff-filter=ACM | grep -E "^src/.*\.(cpp|h)$" || true)
+            if [ -n "$files" ]; then
+              for file in $files; do
+                if ! clang-format --style=file --dry-run -Werror "$file" > /dev/null 2>&1; then
+                  echo "❌ ERROR: $file is not properly formatted!"
+                  echo "Run: ./tools/openluxtool.sh and select option 8 (Format code)"
+                  echo "Or run: clang-format -i --style=file $file"
+                  exit 1
+                fi
+              done
+            fi
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+  # Python code formatting (for build scripts)
+  - repo: https://github.com/psf/black
+    rev: 24.1.1
+    hooks:
+      - id: black
+        language_version: python3
+        files: ^scripts/.*\.py$
+
+  # Check platformio.ini validity
+  - repo: local
+    hooks:
+      - id: check-platformio-ini
+        name: Check platformio.ini syntax
+        entry: bash -c
+        args:
+          - |
+            if git diff --cached --name-only | grep -q "platformio.ini"; then
+              if ! python -c "import configparser; c = configparser.ConfigParser(); c.read('platformio.ini')" 2>/dev/null; then
+                echo "❌ ERROR: platformio.ini has syntax errors!"
+                exit 1
+              fi
+            fi
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
