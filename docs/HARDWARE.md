@@ -64,6 +64,8 @@ Non-affiliate links (AliExpress):
 - https://it.aliexpress.com/item/1005010398547957.html
 - https://it.aliexpress.com/item/1005005698921144.html
 
+<img src="openlux-schematic.png" alt="schematic" height="600px"/>
+
 ## Pin configuration
 Edit in `src/config.h`:
 ```cpp
