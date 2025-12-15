@@ -138,6 +138,34 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
     last_request_time_ = millis();
 }
 
+bool ProtocolBridge::validate_response_match(const LuxParseResult& result,
+                                             const TcpParseResult& request) {
+    // Check function code
+    if (static_cast<uint8_t>(result.function_code) != request.function_code) {
+        return false;
+    }
+
+    // Check start address
+    if (result.start_address != request.start_register) {
+        return false;
+    }
+
+    // Check register count only if it's a successful response (exceptions don't have count)
+    if (result.success) {
+        if (request.is_write_operation) {
+            if (result.register_count != request.write_values.size()) {
+                return false;
+            }
+        } else {
+            if (result.register_count != request.register_count) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
 void ProtocolBridge::process_rs485_response() {
     if (!rs485_->is_waiting_response()) {
         // Response received
@@ -146,6 +174,20 @@ void ProtocolBridge::process_rs485_response() {
         unsigned long elapsed = millis() - last_request_time_;
 
         if (rs485_result.success) {
+            // Validate response matches request to avoid processing snooped packets
+            if (!validate_response_match(rs485_result, current_request_.wifi_request)) {
+                LOGW(TAG,
+                     "⚠ Response mismatch! Expected func=0x%02X start=%d, Got func=0x%02X start=%d",
+                     current_request_.wifi_request.function_code,
+                     current_request_.wifi_request.start_register,
+                     static_cast<uint8_t>(rs485_result.function_code), rs485_result.start_address);
+
+                send_error_response(current_request_.client, "Response mismatch (collision?)");
+                failed_requests_++;
+                waiting_rs485_response_ = false;
+                return;
+            }
+
             // Build value summary
             String value_summary = "";
             if (rs485_result.register_count == 1 && !rs485_result.register_values.empty()) {
@@ -170,7 +212,27 @@ void ProtocolBridge::process_rs485_response() {
             LOGI(TAG, "[REQ#%d] ✓ Completed (success: %d/%d = %.1f%%)", total_requests_,
                  successful_requests_, total_requests_,
                  (100.0f * successful_requests_) / total_requests_);
+
+            waiting_rs485_response_ = false;
         } else {
+            // If it's a Modbus exception, validate it matches our request
+            if (rs485_result.error_message.startsWith("Modbus Exception")) {
+                if (!validate_response_match(rs485_result, current_request_.wifi_request)) {
+                    LOGW(TAG,
+                         "⚠ Exception response mismatch! Expected func=0x%02X start=%d, Got "
+                         "func=0x%02X start=%d",
+                         current_request_.wifi_request.function_code,
+                         current_request_.wifi_request.start_register,
+                         static_cast<uint8_t>(rs485_result.function_code),
+                         rs485_result.start_address);
+
+                    send_error_response(current_request_.client, "Response mismatch (collision?)");
+                    failed_requests_++;
+                    waiting_rs485_response_ = false;
+                    return;
+                }
+            }
+
             LOGE(TAG, "✗ RS485 FAIL: %s (after %lums)", rs485_result.error_message.c_str(),
                  elapsed);
             const std::vector<uint8_t>& raw = rs485_->get_last_raw_response();

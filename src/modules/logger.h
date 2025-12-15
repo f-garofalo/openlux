@@ -48,7 +48,7 @@ class Logger {
     int getTelnetClientCount() const { return telnet_clients_.size(); }
 
   private:
-    Logger() : buffer_{} {}
+    Logger();
     ~Logger();
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
@@ -58,6 +58,7 @@ class Logger {
     void processClients();
     void broadcast(const char* message);
 
+    SemaphoreHandle_t mutex_ = NULL;
     WiFiServer* telnet_server_ = nullptr;
     std::vector<WiFiClient> telnet_clients_;
     char buffer_[512];

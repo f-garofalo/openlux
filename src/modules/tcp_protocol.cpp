@@ -125,7 +125,7 @@ TcpParseResult TcpProtocol::parse_request(const uint8_t* data, size_t length) {
     memcpy(result.dongle_serial, &data[8], TCP_PROTO_DONGLE_SERIAL_LEN);
 
     // Parse data frame (starts at byte 20)
-    uint8_t action = data[TcpProtocolOffsets::ABS_ACTION];
+    // uint8_t action = data[TcpProtocolOffsets::ABS_ACTION];
     result.function_code = data[TcpProtocolOffsets::ABS_MODBUS_FUNC];
     memcpy(result.inverter_serial, &data[TcpProtocolOffsets::ABS_INVERTER_SERIAL_NUM],
            TCP_PROTO_DONGLE_SERIAL_LEN);

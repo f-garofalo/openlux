@@ -86,8 +86,8 @@ class TCPServer {
 
     // Internal methods
     void add_client(AsyncClient* client);
-    void remove_client(AsyncClient* client);
-    TCPClient* find_client(AsyncClient* client);
+    void remove_client(const AsyncClient* client);
+    TCPClient* find_client(const AsyncClient* client);
     void process_client_data(TCPClient* tcp_client);
     void check_client_timeouts();
 

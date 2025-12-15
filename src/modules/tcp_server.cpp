@@ -7,8 +7,12 @@
  */
 #include "tcp_server.h"
 
+#include "../config.h"
 #include "logger.h"
 #include "protocol_bridge.h"
+#include "tcp_protocol.h"
+
+#include <algorithm>
 
 static const char* TAG = "tcp";
 
@@ -90,7 +94,7 @@ bool TCPServer::send_to_client(size_t client_id, const uint8_t* data, size_t len
         return false;
     }
 
-    size_t written = clients_[client_id].client->write((const char*) data, length);
+    size_t written = clients_[client_id].client->write(reinterpret_cast<const char*>(data), length);
     if (written == length) {
         total_bytes_tx_ += length;
         clients_[client_id].last_activity = millis();
@@ -189,28 +193,18 @@ void TCPServer::handle_client_data(void* arg, AsyncClient* client, void* data, s
 
 void TCPServer::handle_client_disconnect(void* arg, AsyncClient* client) {
     TCPServer* server = static_cast<TCPServer*>(arg);
-
-    LOGI(TAG, "Client disconnected from %s:%d", client->remoteIP().toString().c_str(),
-         client->remotePort());
-
     server->remove_client(client);
 }
 
 void TCPServer::handle_client_error(void* arg, AsyncClient* client, int8_t error) {
     TCPServer* server = static_cast<TCPServer*>(arg);
-
-    LOGW(TAG, "Client error %d from %s:%d", error, client->remoteIP().toString().c_str(),
-         client->remotePort());
-
+    // Log error here as we have the error code, but rely on remove_client for IP logging
+    // Note: client->remoteIP() might be invalid on error too
     server->remove_client(client);
 }
 
 void TCPServer::handle_client_timeout(void* arg, AsyncClient* client, uint32_t time) {
     TCPServer* server = static_cast<TCPServer*>(arg);
-
-    LOGW(TAG, "Client timeout after %d ms from %s:%d", time, client->remoteIP().toString().c_str(),
-         client->remotePort());
-
     server->remove_client(client);
 }
 
@@ -248,35 +242,37 @@ void TCPServer::add_client(AsyncClient* client) {
     LOGI(TAG, "Client added (total: %d/%d)", clients_.size(), max_clients_);
 }
 
-void TCPServer::remove_client(AsyncClient* client) {
-    for (auto it = clients_.begin(); it != clients_.end(); ++it) {
-        if (it->client == client) {
-            LOGI(TAG, "Removing client %s:%d", it->remote_ip.c_str(), it->remote_port);
+void TCPServer::remove_client(const AsyncClient* client) {
+    auto it = std::find_if(clients_.begin(), clients_.end(),
+                           [client](const TCPClient& c) { return c.client == client; });
 
-            // IMPORTANT: Don't delete client pointer!
-            // AsyncTCP manages the lifecycle and will delete it automatically
-            // Just remove from our vector
-            it->client = nullptr; // Clear pointer before erase
-            clients_.erase(it);
+    if (it != clients_.end()) {
+        LOGI(TAG, "Client disconnected: %s:%d", it->remote_ip.c_str(), it->remote_port);
 
-            LOGI(TAG, "Client removed (remaining: %d)", clients_.size());
-            return;
-        }
+        // IMPORTANT: Don't delete client pointer!
+        // AsyncTCP manages the lifecycle and will delete it automatically
+        // Just remove from our vector
+        it->client = nullptr; // Clear pointer before erase
+        clients_.erase(it);
+
+        LOGI(TAG, "Client removed (remaining: %d)", clients_.size());
+    } else {
+        // This is normal if we already removed it (e.g. in check_client_timeouts)
+        LOGD(TAG, "Client disconnected (already removed)");
     }
-
-    LOGW(TAG, "Client not found in list during removal");
 }
 
-TCPClient* TCPServer::find_client(AsyncClient* client) {
+TCPClient* TCPServer::find_client(const AsyncClient* client) {
     // Safety check
     if (!client) {
         return nullptr;
     }
 
-    for (auto& tcp_client : clients_) {
-        if (tcp_client.client == client) {
-            return &tcp_client;
-        }
+    auto it = std::find_if(clients_.begin(), clients_.end(),
+                           [client](const TCPClient& c) { return c.client == client; });
+
+    if (it != clients_.end()) {
+        return &(*it);
     }
     return nullptr;
 }
@@ -317,11 +313,17 @@ void TCPServer::check_client_timeouts() {
             LOGW(TAG, "Client timeout: %s (idle for %d ms)", it->remote_ip.c_str(),
                  now - it->last_activity);
 
-            // IMPORTANT: Don't call close() or delete here!
-            // Just mark the client pointer as null and erase from vector
-            // AsyncTCP will handle cleanup via callbacks
+            AsyncClient* c = it->client;
+
+            // Remove from list FIRST to avoid reentrancy issues if close() triggers callbacks
+            // immediately
             it->client = nullptr;
             it = clients_.erase(it);
+
+            // Close the connection to ensure AsyncTCP cleans up resources
+            if (c && c->connected()) {
+                c->close();
+            }
 
             LOGI(TAG, "Client removed due to timeout (remaining: %d)", clients_.size());
         } else {

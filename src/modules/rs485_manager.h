@@ -97,6 +97,7 @@ class LuxProtocol {
     // Validation
     static bool is_valid_request(const uint8_t* data, size_t length);
     static bool is_valid_response(const uint8_t* data, size_t length);
+    static bool is_request(const uint8_t* data, size_t length);
 
     // Helper functions
     static String serial_to_string(const uint8_t* serial);
@@ -158,6 +159,7 @@ class RS485Manager {
     void process_incoming_data();
     void handle_response(const std::vector<uint8_t>& data);
     void handle_timeout();
+    bool should_ignore_packet(const std::vector<uint8_t>& data);
 
     HardwareSerial* serial_ = nullptr;
     int8_t de_pin_ = -1; // DE/RE pin for RS485 transceiver (-1 if not used)
@@ -168,7 +170,10 @@ class RS485Manager {
 
     // State
     bool waiting_response_ = false;
+    LuxFunctionCode expected_function_code_ = LuxFunctionCode::READ_INPUT;
+    uint16_t expected_start_reg_ = 0;
     unsigned long last_tx_time_ = 0;
+
     unsigned long last_rx_time_ = 0;
     std::vector<uint8_t> rx_buffer_;
     std::vector<uint8_t> last_raw_response_; // Raw response for error forwarding

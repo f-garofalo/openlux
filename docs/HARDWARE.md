@@ -54,15 +54,20 @@ For inverters with RS485 on the CT port, see this wiring reference: https://gith
 
 - RS-485 Module:
 
-<img src="rs485_module.jpg" alt="RS485 Module" height="200px" width="400px"/>
+<img src="rs485_module.jpg" alt="RS485 Module" height="200px" width="450px"/>
 
 - HDMI Connector:
 
-<img src="hdmi_connector.jpg" alt="HDMI Connector" height="250px" width="450px"/>
+<img src="hdmi_connector.jpg" alt="HDMI Connector" height="300px" width="450px"/>
+
+- HDMI Breakout Board for use OpenLux with official luxpower dongle (In this case no HDMI connector is needed):
+
+<img src="hdmi_breakout_board.png" alt="HDMI Breakout Board" height="200px" width="250px"/>
 
 Non-affiliate links (AliExpress):
 - https://it.aliexpress.com/item/1005010398547957.html
 - https://it.aliexpress.com/item/1005005698921144.html
+- https://it.aliexpress.com/item/1005004343592426.html
 
 <img src="openlux-schematic.png" alt="schematic" height="600px"/>
 

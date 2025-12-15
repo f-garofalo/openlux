@@ -59,6 +59,8 @@ class ProtocolBridge {
     ProtocolBridge& operator=(const ProtocolBridge&) = delete;
 
     void process_rs485_response();
+    static bool validate_response_match(const LuxParseResult& result,
+                                        const TcpParseResult& request);
     void send_wifi_response(TCPClient* client, const LuxParseResult& rs485_result);
     void send_error_response(TCPClient* client, const String& error);
 

@@ -17,6 +17,8 @@
 
 #include <Esp.h>
 
+#include <numeric>
+
 #include <WiFi.h>
 
 static const char* CMD_TAG = "cmd";
@@ -86,8 +88,8 @@ void CommandManager::registerCoreCommands() {
     // status
     registerCommand("status", "Show system status (link, network, version, heap)",
                     [](const std::vector<String>&) -> CommandResult {
-                        auto& net = NetworkManager::getInstance();
-                        auto& rs = RS485Manager::getInstance();
+                        const auto& net = NetworkManager::getInstance();
+                        const auto& rs = RS485Manager::getInstance();
 
                         String msg;
                         msg.reserve(300);

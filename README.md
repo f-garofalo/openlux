@@ -36,6 +36,18 @@
 - ✅ **Read/Write Operations** - Full register access (0x03, 0x04, 0x06, 0x10)
 - ✅ **Multi-client** - Up to 5 simultaneous connections
 - ✅ **Minimal Web Dashboard** - Basic status + command runner on port 80 (with basic auth)
+- ✅ **Dual Dongle Mode** - Can operate simultaneously with the official WiFi dongle using a breakout board
+
+---
+
+## 🔌 Dual Dongle Operation
+
+OpenLux can now operate simultaneously with the original manufacturer's WiFi dongle. By using a custom breakout board (splitter), you can connect the official dongle to the inverter and tap into the RS485 signals (A/B/5V/GND) to feed them into OpenLux.
+
+This allows you to:
+- Keep the official cloud monitoring and app functionality active.
+- Use OpenLux for local Home Assistant integration at the same time.
+- OpenLux is smart enough to ignore the official dongle's traffic and only respond to its own requests, avoiding collisions.
 
 ---
 

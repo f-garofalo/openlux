@@ -146,7 +146,6 @@ void WebServerManager::handleStatus() {
     json += R"("raw":")" + raw + "\"";
 
     int start = 0;
-    bool first_field = false;
     while (start <= msg.length()) {
         int nl = msg.indexOf('\n', start);
         String line = (nl == -1) ? msg.substring(start) : msg.substring(start, nl);

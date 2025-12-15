@@ -56,7 +56,7 @@ bool LuxProtocol::create_read_request(std::vector<uint8_t>& packet, LuxFunctionC
     write_little_endian_uint16(&packet[0], LuxProtocolOffsets::COUNT_OR_VALUE, count);
 
     // Calculate CRC (exclude CRC bytes themselves)
-    uint16_t crc = calculate_crc16(&packet[0], LuxProtocolOffsets::CRC_MIN_PACKET);
+    const uint16_t crc = calculate_crc16(&packet[0], LuxProtocolOffsets::CRC_MIN_PACKET);
 
     // Write CRC (little-endian)
     write_little_endian_uint16(&packet[0], LuxProtocolOffsets::CRC_MIN_PACKET, crc);
@@ -102,7 +102,7 @@ bool LuxProtocol::create_write_request(std::vector<uint8_t>& packet, uint16_t st
         write_little_endian_uint16(&packet[0], LuxProtocolOffsets::COUNT_OR_VALUE, values[0]);
 
         // Calculate CRC
-        uint16_t crc = calculate_crc16(&packet[0], LuxProtocolOffsets::CRC_MIN_PACKET);
+        const uint16_t crc = calculate_crc16(&packet[0], LuxProtocolOffsets::CRC_MIN_PACKET);
         write_little_endian_uint16(&packet[0], LuxProtocolOffsets::CRC_MIN_PACKET, crc);
 
         LOGI(TAG, "→ TX: WRITE_SINGLE reg=%d val=0x%04X (%d)", start_reg, values[0], values[0]);
@@ -110,8 +110,8 @@ bool LuxProtocol::create_write_request(std::vector<uint8_t>& packet, uint16_t st
     } else {
         // Write Multiple Registers (0x10)
         // Format: [addr][func][serial:10][start:2][count:2][bytecount:1][values...][crc:2]
-        size_t byte_count = values.size() * 2;
-        size_t packet_size = 17 + byte_count + 2; // Header(17) + data + CRC(2)
+        const size_t byte_count = values.size() * 2;
+        const size_t packet_size = 17 + byte_count + 2; // Header(17) + data + CRC(2)
 
         packet.resize(packet_size);
 
@@ -142,7 +142,7 @@ bool LuxProtocol::create_write_request(std::vector<uint8_t>& packet, uint16_t st
         }
 
         // Calculate CRC
-        uint16_t crc = calculate_crc16(&packet[0], packet_size - 2);
+        const uint16_t crc = calculate_crc16(&packet[0], packet_size - 2);
         write_little_endian_uint16(&packet[0], packet_size - 2, crc);
 
         // Build value preview
@@ -166,14 +166,15 @@ bool LuxProtocol::create_write_request(std::vector<uint8_t>& packet, uint16_t st
 static LuxParseResult parse_exception_response(const uint8_t* data, size_t length) {
     LuxParseResult result;
 
-    uint8_t func_byte = data[LuxProtocolOffsets::FUNC];
+    const uint8_t func_byte = data[LuxProtocolOffsets::FUNC];
     result.function_code = static_cast<LuxFunctionCode>(func_byte & 0x7F);
     memcpy(result.serial_number, &data[LuxProtocolOffsets::SERIAL_NUM], LUX_SERIAL_NUMBER_LENGTH);
 
     if (length >= LUX_MIN_EXCEPTION_SIZE) {
-        uint16_t failed_register =
+        const uint16_t failed_register =
             LuxProtocol::parse_little_endian_uint16(data, LuxProtocolOffsets::START_REG);
-        uint8_t exception_code = data[LuxProtocolOffsets::EXCEPTION_CODE];
+        result.start_address = failed_register;
+        const uint8_t exception_code = data[LuxProtocolOffsets::EXCEPTION_CODE];
 
         const char* exception_msg;
         switch (exception_code) {
@@ -213,8 +214,8 @@ static LuxParseResult parse_read_response(const uint8_t* data, size_t length, ui
     result.start_address =
         LuxProtocol::parse_little_endian_uint16(data, LuxProtocolOffsets::START_REG);
 
-    uint8_t byte_count = data[LuxProtocolOffsets::COUNT_OR_VALUE];
-    size_t expected_length = 15 + byte_count + 2; // header + data + crc
+    const uint8_t byte_count = data[LuxProtocolOffsets::COUNT_OR_VALUE];
+    const size_t expected_length = 15 + byte_count + 2; // header + data + crc
     if (length < expected_length) {
         result.error_message = "Response packet too short";
         LOGE(TAG, "%s: got %d, expected %d for func 0x%02X", result.error_message.c_str(), length,
@@ -222,8 +223,8 @@ static LuxParseResult parse_read_response(const uint8_t* data, size_t length, ui
         return result;
     }
 
-    uint16_t calculated_crc = LuxProtocol::calculate_crc16(data, length - 2);
-    uint16_t received_crc = LuxProtocol::parse_little_endian_uint16(data, length - 2);
+    const uint16_t calculated_crc = LuxProtocol::calculate_crc16(data, length - 2);
+    const uint16_t received_crc = LuxProtocol::parse_little_endian_uint16(data, length - 2);
     LOGD(TAG, "CRC Check: calculated=0x%04X, received=0x%04X", calculated_crc, received_crc);
     if (calculated_crc != received_crc) {
         result.error_message = "CRC mismatch";
@@ -236,7 +237,7 @@ static LuxParseResult parse_read_response(const uint8_t* data, size_t length, ui
     result.register_values.reserve(result.register_count);
     size_t data_offset = LuxProtocolOffsets::COUNT_OR_VALUE + 1;
     for (size_t i = 0; i < result.register_count; i++) {
-        uint16_t value = LuxProtocol::parse_little_endian_uint16(data, data_offset + (i * 2));
+        const uint16_t value = LuxProtocol::parse_little_endian_uint16(data, data_offset + (i * 2));
         result.register_values.push_back(value);
     }
 
@@ -251,7 +252,7 @@ static LuxParseResult parse_write_single_response(const uint8_t* data, size_t le
     result.start_address =
         LuxProtocol::parse_little_endian_uint16(data, LuxProtocolOffsets::START_REG);
 
-    size_t expected_length = 18;
+    const size_t expected_length = 18;
     if (length < expected_length) {
         result.error_message = "Response packet too short";
         LOGE(TAG, "%s: got %d, expected %d for func 0x06", result.error_message.c_str(), length,
@@ -259,8 +260,8 @@ static LuxParseResult parse_write_single_response(const uint8_t* data, size_t le
         return result;
     }
 
-    uint16_t calculated_crc = LuxProtocol::calculate_crc16(data, length - 2);
-    uint16_t received_crc = LuxProtocol::parse_little_endian_uint16(data, length - 2);
+    const uint16_t calculated_crc = LuxProtocol::calculate_crc16(data, length - 2);
+    const uint16_t received_crc = LuxProtocol::parse_little_endian_uint16(data, length - 2);
     LOGD(TAG, "CRC Check: calculated=0x%04X, received=0x%04X", calculated_crc, received_crc);
     if (calculated_crc != received_crc) {
         result.error_message = "CRC mismatch";
@@ -270,7 +271,7 @@ static LuxParseResult parse_write_single_response(const uint8_t* data, size_t le
 
     result.register_count = 1;
     result.register_values.reserve(1);
-    uint16_t value =
+    const uint16_t value =
         LuxProtocol::parse_little_endian_uint16(data, LuxProtocolOffsets::COUNT_OR_VALUE);
     result.register_values.push_back(value);
 
@@ -285,7 +286,7 @@ static LuxParseResult parse_write_multi_response(const uint8_t* data, size_t len
     result.start_address =
         LuxProtocol::parse_little_endian_uint16(data, LuxProtocolOffsets::START_REG);
 
-    size_t expected_length = 18;
+    const size_t expected_length = 18;
     if (length < expected_length) {
         result.error_message = "Response packet too short";
         LOGE(TAG, "%s: got %d, expected %d for func 0x10", result.error_message.c_str(), length,
@@ -293,8 +294,8 @@ static LuxParseResult parse_write_multi_response(const uint8_t* data, size_t len
         return result;
     }
 
-    uint16_t calculated_crc = LuxProtocol::calculate_crc16(data, length - 2);
-    uint16_t received_crc = LuxProtocol::parse_little_endian_uint16(data, length - 2);
+    const uint16_t calculated_crc = LuxProtocol::calculate_crc16(data, length - 2);
+    const uint16_t received_crc = LuxProtocol::parse_little_endian_uint16(data, length - 2);
     LOGD(TAG, "CRC Check: calculated=0x%04X, received=0x%04X", calculated_crc, received_crc);
     if (calculated_crc != received_crc) {
         result.error_message = "CRC mismatch";
@@ -318,7 +319,7 @@ LuxParseResult LuxProtocol::parse_response(const uint8_t* data, size_t length) {
     }
 
     // Check for Modbus exception response (function code with 0x80 bit set)
-    uint8_t func_byte = data[LuxProtocolOffsets::FUNC];
+    const uint8_t func_byte = data[LuxProtocolOffsets::FUNC];
     if (func_byte & 0x80) {
         return parse_exception_response(data, length);
     }
@@ -350,33 +351,19 @@ LuxParseResult LuxProtocol::parse_response(const uint8_t* data, size_t length) {
     return result;
 }
 
-bool LuxProtocol::is_valid_request(const uint8_t* data, size_t length) {
-    if (length < LUX_MIN_REQUEST_SIZE) {
+bool LuxProtocol::is_request(const uint8_t* data, size_t length) {
+    if (length < 1) {
         return false;
     }
-
-    // Check device address (should be 0x00)
-    if (data[0] != LUX_DEVICE_ADDR_REQUEST) {
-        return false;
-    }
-
-    // Check function code
-    uint8_t func = data[1];
-    if (func != static_cast<uint8_t>(LuxFunctionCode::READ_HOLDING) &&
-        func != static_cast<uint8_t>(LuxFunctionCode::READ_INPUT) &&
-        func != static_cast<uint8_t>(LuxFunctionCode::WRITE_SINGLE) &&
-        func != static_cast<uint8_t>(LuxFunctionCode::WRITE_MULTI)) {
-        return false;
-    }
-
-    return true;
+    // Requests always start with 0x00
+    return data[0] == LUX_DEVICE_ADDR_REQUEST;
 }
 
 bool LuxProtocol::is_valid_response(const uint8_t* data, size_t length) {
     // Exception responses are shorter, so check appropriate minimum
-    uint8_t func = data[1];
-    bool is_exception = (func & 0x80) != 0;
-    size_t min_size = is_exception ? LUX_MIN_EXCEPTION_SIZE : LUX_MIN_RESPONSE_SIZE;
+    const uint8_t func = data[1];
+    const bool is_exception = (func & 0x80) != 0;
+    const size_t min_size = is_exception ? LUX_MIN_EXCEPTION_SIZE : LUX_MIN_RESPONSE_SIZE;
 
     if (length < min_size) {
         LOGD(TAG, "Response too short: %d bytes (min %d for %s)", length, min_size,
@@ -384,8 +371,15 @@ bool LuxProtocol::is_valid_response(const uint8_t* data, size_t length) {
         return false;
     }
 
+    // Check device address (should be 0x01 for responses)
+    if (data[LuxProtocolOffsets::ADDR] != LUX_DEVICE_ADDR_RESPONSE) {
+        LOGD(TAG, "Invalid response address: 0x%02X (expected 0x%02X)",
+             data[LuxProtocolOffsets::ADDR], LUX_DEVICE_ADDR_RESPONSE);
+        return false;
+    }
+
     // Check function code (allow exception codes with 0x80 bit set)
-    uint8_t base_func = func & 0x7F; // Remove exception bit
+    const uint8_t base_func = func & 0x7F; // Remove exception bit
 
     if (base_func != static_cast<uint8_t>(LuxFunctionCode::READ_HOLDING) &&
         base_func != static_cast<uint8_t>(LuxFunctionCode::READ_INPUT) &&
@@ -495,6 +489,8 @@ void RS485Manager::request_inverter_serial_probe() {
          LUX_INVERTER_SN_START_REG + LUX_INVERTER_SN_REG_COUNT - 1);
 
     serial_probe_pending_ = true;
+    expected_function_code_ = LuxFunctionCode::READ_INPUT;
+    expected_start_reg_ = LUX_INVERTER_SN_START_REG;
     send_packet(packet);
 }
 
@@ -536,6 +532,8 @@ bool RS485Manager::send_read_request(LuxFunctionCode func, uint16_t start_reg, u
         return false;
     }
 
+    expected_function_code_ = func;
+    expected_start_reg_ = start_reg;
     send_packet(packet);
     return true;
 }
@@ -558,6 +556,9 @@ bool RS485Manager::send_write_request(uint16_t start_reg, const std::vector<uint
         return false;
     }
 
+    expected_function_code_ =
+        values.size() == 1 ? LuxFunctionCode::WRITE_SINGLE : LuxFunctionCode::WRITE_MULTI;
+    expected_start_reg_ = start_reg;
     send_packet(packet);
     return true;
 }
@@ -588,16 +589,45 @@ void RS485Manager::send_packet(const std::vector<uint8_t>& packet) {
     total_requests_++;
 }
 
+bool RS485Manager::should_ignore_packet(const std::vector<uint8_t>& data) {
+    if (data.empty()) {
+        return true;
+    }
+
+    // 1. Check if it's a request from another master (starts with 0x00)
+    if (LuxProtocol::is_request(data.data(), data.size())) {
+        LOGD(TAG, "Ignoring request packet from another master (starts with 0x00): %s",
+             LuxProtocol::format_hex(data.data(), data.size()).c_str());
+        return true;
+    }
+
+    // 2. If we are NOT waiting for a response, we should ignore everything
+    //    (unless we implement sniffing later)
+    if (!waiting_response_) {
+        LOGD(TAG, "Ignoring packet while not waiting for response: %s",
+             LuxProtocol::format_hex(data.data(), data.size()).c_str());
+        return true;
+    }
+
+    return false;
+}
+
 void RS485Manager::process_incoming_data() {
     // Read available bytes
     while (serial_->available()) {
-        uint8_t byte = serial_->read();
+        const uint8_t byte = serial_->read();
         rx_buffer_.push_back(byte);
         last_rx_time_ = millis();
     }
 
     // Check if we have accumulated a complete frame
     if (!rx_buffer_.empty() && (millis() - last_rx_time_) > LUX_INTER_FRAME_DELAY_MS) {
+        if (should_ignore_packet(rx_buffer_)) {
+            rx_buffer_.clear();
+            // Do NOT reset waiting_response_ here. If we are waiting, we keep waiting.
+            return;
+        }
+
         // Try to parse the response
         if (LuxProtocol::is_valid_response(rx_buffer_.data(), rx_buffer_.size())) {
             handle_response(rx_buffer_);
@@ -626,7 +656,9 @@ void RS485Manager::process_incoming_data() {
     if (!rx_buffer_.empty() && (millis() - last_rx_time_) > 500) {
         LOGW(TAG, "RX buffer timeout, clearing %d bytes", rx_buffer_.size());
         rx_buffer_.clear();
-        waiting_response_ = false;
+        // Do NOT reset waiting_response_ here, let handle_timeout do it properly
+        // waiting_response_ = false;
+
         if (serial_probe_pending_) {
             LOGE(TAG, "Inverter serial probe failed: inter-frame timeout");
             serial_probe_pending_ = false;
@@ -649,10 +681,26 @@ void RS485Manager::handle_response(const std::vector<uint8_t>& data) {
     // Parse response
     last_result_ = LuxProtocol::parse_response(data.data(), data.size());
 
-    bool is_serial_probe = serial_probe_pending_ &&
-                           last_result_.function_code == LuxFunctionCode::READ_INPUT &&
-                           last_result_.start_address == LUX_INVERTER_SN_START_REG &&
-                           last_result_.register_count >= LUX_INVERTER_SN_REG_COUNT;
+    // Validate against expected request
+    if (last_result_.success) {
+        if (last_result_.function_code != expected_function_code_) {
+            last_result_.success = false;
+            last_result_.error_message = "Response function code mismatch";
+            LOGW(TAG, "Response function code mismatch: expected 0x%02X, got 0x%02X",
+                 static_cast<uint8_t>(expected_function_code_),
+                 static_cast<uint8_t>(last_result_.function_code));
+        } else if (last_result_.start_address != expected_start_reg_) {
+            last_result_.success = false;
+            last_result_.error_message = "Response start register mismatch";
+            LOGW(TAG, "Response start register mismatch: expected %d, got %d", expected_start_reg_,
+                 last_result_.start_address);
+        }
+    }
+
+    const bool is_serial_probe = serial_probe_pending_ &&
+                                 last_result_.function_code == LuxFunctionCode::READ_INPUT &&
+                                 last_result_.start_address == LUX_INVERTER_SN_START_REG &&
+                                 last_result_.register_count >= LUX_INVERTER_SN_REG_COUNT;
 
     if (last_result_.success) {
         // Build operation description

@@ -11,7 +11,9 @@
 #include "../config.h"
 #include "command_manager.h"
 
-#include <stdarg.h>
+#include <cstdarg>
+
+Logger::Logger() : mutex_(xSemaphoreCreateRecursiveMutex()), buffer_{} {}
 
 Logger& Logger::getInstance() {
     static Logger instance;
@@ -91,6 +93,10 @@ void Logger::error(const char* tag, const char* format, ...) {
 
 void Logger::log(const char* level, const char* color, const char* tag, const char* format,
                  va_list args) {
+    if (mutex_) {
+        xSemaphoreTakeRecursive(mutex_, portMAX_DELAY);
+    }
+
     // Format timestamp (ESPHome style: [HH:MM:SS])
     unsigned long ms = millis();
     unsigned long sec = ms / 1000;
@@ -122,6 +128,10 @@ void Logger::log(const char* level, const char* color, const char* tag, const ch
     // Send to Telnet clients
     if (telnet_server_) {
         broadcast(telnet_line);
+    }
+
+    if (mutex_) {
+        xSemaphoreGiveRecursive(mutex_);
     }
 }
 
@@ -160,6 +170,10 @@ void Logger::stopTelnet() {
 }
 
 void Logger::processClients() {
+    if (mutex_) {
+        xSemaphoreTakeRecursive(mutex_, portMAX_DELAY);
+    }
+
     // Accept new clients
     if (telnet_server_->hasClient()) {
         WiFiClient new_client = telnet_server_->available();
@@ -213,6 +227,10 @@ void Logger::processClients() {
             }
             ++it;
         }
+    }
+
+    if (mutex_) {
+        xSemaphoreGiveRecursive(mutex_);
     }
 }
 
