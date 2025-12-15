@@ -53,6 +53,50 @@ uint32_t SystemManager::getMinFreeHeap() const {
     return ESP.getMinFreeHeap();
 }
 
+uint32_t SystemManager::getMaxAllocHeap() const {
+    return ESP.getMaxAllocHeap();
+}
+
+uint32_t SystemManager::getPsramSize() const {
+#ifdef BOARD_HAS_PSRAM
+    return ESP.getPsramSize();
+#else
+    return 0;
+#endif
+}
+
+uint32_t SystemManager::getFreePsram() const {
+#ifdef BOARD_HAS_PSRAM
+    return ESP.getFreePsram();
+#else
+    return 0;
+#endif
+}
+
+uint32_t SystemManager::getCpuFreqMHz() const {
+    return ESP.getCpuFreqMHz();
+}
+
+uint32_t SystemManager::getFlashChipSize() const {
+    return ESP.getFlashChipSize();
+}
+
+const char* SystemManager::getSdkVersion() const {
+    return ESP.getSdkVersion();
+}
+
+uint8_t SystemManager::getChipRevision() const {
+    return ESP.getChipRevision();
+}
+
+const char* SystemManager::getChipModel() const {
+    return ESP.getChipModel();
+}
+
+uint8_t SystemManager::getChipCores() const {
+    return ESP.getChipCores();
+}
+
 uint32_t SystemManager::getUptime() const {
     return millis() / 1000;
 }

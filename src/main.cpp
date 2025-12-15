@@ -154,11 +154,12 @@ void printWelcomeBanner() {
 void printSystemInfo() {
     Serial.println("--- System Information ---");
 
-    LOGI(TAG, "Chip: ESP32");
-    LOGI(TAG, "CPU Frequency: %d MHz", ESP.getCpuFreqMHz());
-    LOGI(TAG, "Flash Size: %d KB", ESP.getFlashChipSize() / 1024);
-    LOGI(TAG, "Free Heap: %d KB", ESP.getFreeHeap() / 1024);
-    LOGI(TAG, "SDK Version: %s", ESP.getSdkVersion());
+    LOGI(TAG, "Chip: %s (Rev %d, %d cores)", sys.getChipModel(), sys.getChipRevision(),
+         sys.getChipCores());
+    LOGI(TAG, "CPU Frequency: %d MHz", sys.getCpuFreqMHz());
+    LOGI(TAG, "Flash Size: %d KB", sys.getFlashChipSize() / 1024);
+    LOGI(TAG, "Free Heap: %d KB", sys.getFreeHeap() / 1024);
+    LOGI(TAG, "SDK Version: %s", sys.getSdkVersion());
 
 #ifdef USE_STATIC_IP
     LOGI(TAG, "Network Mode: Static IP");

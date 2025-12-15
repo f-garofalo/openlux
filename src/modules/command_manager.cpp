@@ -116,6 +116,42 @@ void CommandManager::registerCoreCommands() {
                         msg += String(sys.getFreeHeap());
                         msg += " bytes";
 
+                        msg += "\nChip: ";
+                        msg += sys.getChipModel();
+                        msg += " (Rev ";
+                        msg += String(sys.getChipRevision());
+                        msg += ", ";
+                        msg += String(sys.getChipCores());
+                        msg += " cores)";
+
+                        msg += "\nCPU Freq: ";
+                        msg += String(sys.getCpuFreqMHz());
+                        msg += " MHz";
+
+                        msg += "\nFlash Size: ";
+                        msg += String(sys.getFlashChipSize() / 1024);
+                        msg += " KB";
+
+                        msg += "\nSDK: ";
+                        msg += sys.getSdkVersion();
+
+                        msg += "\nFeatures: ";
+#ifdef BOARD_HAS_PSRAM
+                        msg += "PSRAM ";
+#endif
+#ifdef USE_STATIC_IP
+                        msg += "STATIC_IP ";
+#endif
+#ifdef ENABLE_NTP
+                        msg += "NTP ";
+#endif
+#ifdef ENABLE_OTA
+                        msg += "OTA ";
+#endif
+#ifdef ENABLE_TELNET
+                        msg += "TELNET ";
+#endif
+
                         msg += "\nLast Reboot: ";
                         msg += sys.getLastRebootReason();
 
@@ -269,18 +305,19 @@ void CommandManager::registerCoreCommands() {
     // heap info
     registerCommand("heap", "Show heap/PSRAM info",
                     [](const std::vector<String>&) -> CommandResult {
+                        const auto& sys = SystemManager::getInstance();
                         String out;
                         out.reserve(96);
                         out += "Heap free: ";
-                        out += String(ESP.getFreeHeap());
+                        out += String(sys.getFreeHeap());
                         out += " bytes\nHeap max alloc: ";
-                        out += String(ESP.getMaxAllocHeap());
+                        out += String(sys.getMaxAllocHeap());
                         out += " bytes";
 #ifdef BOARD_HAS_PSRAM
                         out += "\nPSRAM size: ";
-                        out += String(ESP.getPsramSize());
+                        out += String(sys.getPsramSize());
                         out += " bytes\nPSRAM free: ";
-                        out += String(ESP.getFreePsram());
+                        out += String(sys.getFreePsram());
                         out += " bytes";
 #endif
                         return CommandResult{true, out};
