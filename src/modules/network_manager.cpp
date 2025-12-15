@@ -9,6 +9,7 @@
 
 #include "../config.h"
 #include "logger.h"
+#include "system_manager.h"
 
 #include <Esp.h>
 
@@ -22,6 +23,7 @@ NetworkManager& NetworkManager::getInstance() {
 void NetworkManager::begin(const char* ssid, const char* password, const char* hostname) {
     // Track boot attempts to detect repeated failed boots
     prefs_.begin("openlux", false);
+
     boot_failures_ = prefs_.getUChar("boot_fail", 0);
     boot_failures_loaded_ = true;
     boot_failures_++;
@@ -263,13 +265,7 @@ void NetworkManager::restartInterface() {
 #endif
 
 void NetworkManager::rebootDevice(const char* reason) {
-    if (reason && strlen(reason) > 0) {
-        LOGE(TAG, "Rebooting device: %s", reason);
-    } else {
-        LOGE(TAG, "Rebooting device");
-    }
-    delay(100);
-    ESP.restart();
+    SystemManager::getInstance().reboot(reason);
 }
 
 #if OPENLUX_USE_ETHERNET

@@ -27,6 +27,7 @@
 #include "modules/ntp_manager.h"
 #include "modules/protocol_bridge.h"
 #include "modules/rs485_manager.h"
+#include "modules/system_manager.h"
 #include "modules/tcp_server.h"
 #ifdef ENABLE_WEB_DASH
 #include "modules/web_server.h"
@@ -40,6 +41,7 @@ static const char* TAG = "main";
 
 // Global singleton instances
 Logger& logger = Logger::getInstance();
+SystemManager& sys = SystemManager::getInstance();
 NetworkManager& network = NetworkManager::getInstance();
 NTPManager& ntp = NTPManager::getInstance();
 RS485Manager& rs485 = RS485Manager::getInstance();
@@ -71,6 +73,10 @@ void setupWebServer();
 void setup() {
     // Initialize logger (serial + telnet)
     logger.begin(115200);
+
+    // Initialize system manager (reads reboot reason)
+    sys.begin();
+
     CommandManager::getInstance().registerCoreCommands();
 
     // Print welcome banner

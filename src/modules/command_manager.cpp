@@ -13,6 +13,7 @@
 #include "network_manager.h"
 #include "ntp_manager.h"
 #include "rs485_manager.h"
+#include "system_manager.h"
 #include "tcp_server.h"
 
 #include <Esp.h>
@@ -90,6 +91,7 @@ void CommandManager::registerCoreCommands() {
                     [](const std::vector<String>&) -> CommandResult {
                         const auto& net = NetworkManager::getInstance();
                         const auto& rs = RS485Manager::getInstance();
+                        const auto& sys = SystemManager::getInstance();
 
                         String msg;
                         msg.reserve(300);
@@ -111,11 +113,13 @@ void CommandManager::registerCoreCommands() {
                         }
 
                         msg += "\nHeap: ";
-                        msg += String(ESP.getFreeHeap());
+                        msg += String(sys.getFreeHeap());
                         msg += " bytes";
 
-                        uint32_t up_ms = millis();
-                        uint32_t up_sec = up_ms / 1000;
+                        msg += "\nLast Reboot: ";
+                        msg += sys.getLastRebootReason();
+
+                        uint32_t up_sec = sys.getUptime();
                         uint32_t up_min = up_sec / 60;
                         uint32_t up_hr = up_min / 60;
                         msg += "\nUptime: ";
@@ -148,7 +152,7 @@ void CommandManager::registerCoreCommands() {
         }
         last_reboot_ms = now;
         LOGI(CMD_TAG, "Rebooting on user command");
-        NetworkManager::getInstance().rebootDevice("User command");
+        SystemManager::getInstance().reboot("User command");
         return CommandResult{true, "Rebooting..."};
     });
 

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - Placeholder for future changes.
 
+## [1.0.2] - 2025-12-15
+### Added
+- **SystemManager**: Centralized system operations (reboot, heap, uptime).
+- **Reboot Persistence**: Last reboot reason is now saved to NVS and displayed in `status` command.
+- **NTP Logging Fix**: Logs now use synchronized time (if available) instead of uptime.
+- **Hardware Abstraction**: Refactored hardware-specific calls (like `ESP.restart()`) into `SystemManager`.
+
 ## [1.0.1] - 2025-12-15
 ### Added
 - Support for simultaneous operation with official WiFi dongle (Dual Dongle Mode).

@@ -10,6 +10,7 @@
 
 #include "../config.h"
 #include "command_manager.h"
+#include "ntp_manager.h"
 
 #include <cstdarg>
 
@@ -98,10 +99,25 @@ void Logger::log(const char* level, const char* color, const char* tag, const ch
     }
 
     // Format timestamp (ESPHome style: [HH:MM:SS])
-    unsigned long ms = millis();
-    unsigned long sec = ms / 1000;
-    unsigned long min = sec / 60;
-    unsigned long hr = min / 60;
+    unsigned long log_h, log_m, log_s;
+
+    if (NTPManager::getInstance().isSynced()) {
+        time_t now;
+        time(&now);
+        struct tm timeinfo;
+        localtime_r(&now, &timeinfo);
+        log_h = timeinfo.tm_hour;
+        log_m = timeinfo.tm_min;
+        log_s = timeinfo.tm_sec;
+    } else {
+        unsigned long ms = millis();
+        unsigned long sec = ms / 1000;
+        unsigned long min = sec / 60;
+        unsigned long hr = min / 60;
+        log_h = hr % 24;
+        log_m = min % 60;
+        log_s = sec % 60;
+    }
 
     // Format message
     vsnprintf(buffer_, sizeof(buffer_), format, args);
@@ -111,8 +127,8 @@ void Logger::log(const char* level, const char* color, const char* tag, const ch
     char serial_line[600];
 
     // Senza colori (plain text)
-    snprintf(serial_line, sizeof(serial_line), "[%02lu:%02lu:%02lu][%s][%s]: %s", hr % 24, min % 60,
-             sec % 60, // Timestamp
+    snprintf(serial_line, sizeof(serial_line), "[%02lu:%02lu:%02lu][%s][%s]: %s", log_h, log_m,
+             log_s,    // Timestamp
              level,    // Level
              tag,      // Tag
              buffer_); // Message
@@ -122,8 +138,8 @@ void Logger::log(const char* level, const char* color, const char* tag, const ch
 
     // Build log line for Telnet (always with colors for better terminal support)
     char telnet_line[600];
-    snprintf(telnet_line, sizeof(telnet_line), "%s[%02lu:%02lu:%02lu][%s][%s]:%s %s", color,
-             hr % 24, min % 60, sec % 60, level, tag, COLOR_RESET, buffer_);
+    snprintf(telnet_line, sizeof(telnet_line), "%s[%02lu:%02lu:%02lu][%s][%s]:%s %s", color, log_h,
+             log_m, log_s, level, tag, COLOR_RESET, buffer_);
 
     // Send to Telnet clients
     if (telnet_server_) {
