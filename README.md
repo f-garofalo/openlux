@@ -1,6 +1,6 @@
 # OpenLux Network Bridge
 
-[![Version](https://img.shields.io/badge/Version-1.0.0-green.svg)](./src/config.h)
+[![Version](https://img.shields.io/badge/Version-1.0.1-green.svg)](./src/config.h)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![ESP32](https://img.shields.io/badge/ESP32-Supported-blue.svg)](https://www.espressif.com/en/products/socs/esp32)
 [![PlatformIO](https://img.shields.io/badge/PlatformIO-Ready-orange.svg)](https://platformio.org/)

@@ -154,7 +154,7 @@
 /**
  * @brief Firmware Information
  */
-#define FIRMWARE_VERSION "1.0.0"            ///< Semantic version
+#define FIRMWARE_VERSION "1.0.1"            ///< Semantic version
 #define FIRMWARE_NAME "OpenLux WiFi Bridge" ///< Project name
 #include "build_info.h"                     ///< Auto-generated build timestamp
 
