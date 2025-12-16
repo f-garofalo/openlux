@@ -64,12 +64,17 @@ For inverters with RS485 on the CT port, see this wiring reference: https://gith
 
 <img src="hdmi_breakout_board.png" alt="HDMI Breakout Board" height="200px" width="250px"/>
 
+
+
 Non-affiliate links (AliExpress):
 - https://it.aliexpress.com/item/1005010398547957.html
 - https://it.aliexpress.com/item/1005005698921144.html
 - https://it.aliexpress.com/item/1005004343592426.html
 
 <img src="openlux-schematic.png" alt="schematic" height="600px"/>
+
+## Dual dongle mode (optional)
+<img src="dual_dongle_mode-schematic.png" alt="schematic dual dongle mode" height="600px"/>
 
 ## Pin configuration
 Edit in `src/config.h`:
