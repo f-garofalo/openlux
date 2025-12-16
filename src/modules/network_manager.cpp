@@ -328,13 +328,77 @@ bool NetworkManager::startProvisioningPortal() {
 }
 #endif
 
-void NetworkManager::connectWiFi() {
+int NetworkManager::scanAndFindBestAP(int& bestRSSI) {
+    // Scan for networks (synchronous scan)
+    int n = WiFi.scanNetworks();
+    int bestNetworkIndex = -1;
+    bestRSSI = -1000;
+
+    if (n == 0) {
+        LOGW(TAG, "No networks found during scan");
+    } else {
+        LOGD(TAG, "Scan done, %d networks found", n);
+        for (int i = 0; i < n; ++i) {
+            String currentSSID = WiFi.SSID(i);
+            // Check if SSID matches (case sensitive)
+            if (currentSSID.equals(ssid_)) {
+                int rssi = WiFi.RSSI(i);
+                LOGD(TAG, "  Found AP: %s, RSSI: %d, BSSID: %s, Channel: %d", currentSSID.c_str(),
+                     rssi, WiFi.BSSIDstr(i).c_str(), WiFi.channel(i));
+
+                if (rssi > bestRSSI) {
+                    bestRSSI = rssi;
+                    bestNetworkIndex = i;
+                }
+            }
+        }
+    }
+    return bestNetworkIndex;
+}
+
+void NetworkManager::forceScanAndConnect() {
+    LOGI(TAG, "Forcing WiFi scan and connect...");
+    connectWiFi(true);
+}
+
+void NetworkManager::connectWiFi(bool force_scan) {
 #if OPENLUX_USE_ETHERNET
     return;
 #else
-    LOGI(TAG, "Connecting to WiFi...");
-    WiFi.begin(ssid_, password_);
-    last_connect_attempt_ = millis();
+    bool should_scan = true;
+#if defined(WIFI_FAST_CONNECT) && (WIFI_FAST_CONNECT == 1)
+    should_scan = false;
+#endif
+    if (force_scan)
+        should_scan = true;
+
+    if (!should_scan) {
+        LOGI(TAG, "Fast Connect enabled: skipping scan");
+        WiFi.begin(ssid_, password_);
+        last_connect_attempt_ = millis();
+    } else {
+        LOGI(TAG, "Scanning for best AP for SSID: %s", ssid_);
+
+        int bestRSSI;
+        int bestNetworkIndex = scanAndFindBestAP(bestRSSI);
+
+        if (bestNetworkIndex >= 0) {
+            uint8_t* bssid = WiFi.BSSID(bestNetworkIndex);
+            int32_t channel = WiFi.channel(bestNetworkIndex);
+            LOGI(TAG, "Connecting to best AP: %s (RSSI: %d, Channel: %d)",
+                 WiFi.BSSIDstr(bestNetworkIndex).c_str(), bestRSSI, channel);
+
+            // Connect using specific BSSID and channel for faster and more reliable connection
+            WiFi.begin(ssid_, password_, channel, bssid);
+        } else {
+            LOGW(TAG,
+                 "Target SSID not found in scan or scan failed, using default connection method");
+            WiFi.begin(ssid_, password_);
+        }
+
+        WiFi.scanDelete(); // Clean up scan results from memory
+        last_connect_attempt_ = millis();
+    }
 #endif
 }
 
@@ -388,6 +452,52 @@ void NetworkManager::checkConnection() {
              WiFi.RSSI());
         last_status_log_ = millis();
     }
+
+#if WIFI_PERIODIC_SCAN_ENABLED
+    // Periodic scan for better AP
+    if (connected && (millis() - last_scan_ms_ > WIFI_PERIODIC_SCAN_INTERVAL_MS)) {
+        LOGI(TAG, "Periodic WiFi scan: checking for better AP...");
+        last_scan_ms_ = millis();
+
+        int bestRSSI;
+        int bestNetworkIndex = scanAndFindBestAP(bestRSSI);
+
+        if (bestNetworkIndex >= 0) {
+            int currentRSSI = WiFi.RSSI();
+            String currentBSSID = WiFi.BSSIDstr();
+
+            // Check if the new AP is significantly better
+            if (bestRSSI > (currentRSSI + WIFI_RSSI_THRESHOLD_DBM)) {
+                String newBSSID = WiFi.BSSIDstr(bestNetworkIndex);
+                // Only roam if BSSID is different
+                if (!newBSSID.equalsIgnoreCase(currentBSSID)) {
+                    LOGI(TAG, "Found better AP! Current: %d dBm, New: %d dBm", currentRSSI,
+                         bestRSSI);
+                    LOGI(TAG, "Roaming from %s to %s", currentBSSID.c_str(), newBSSID.c_str());
+
+                    uint8_t* bssid = WiFi.BSSID(bestNetworkIndex);
+                    int32_t channel = WiFi.channel(bestNetworkIndex);
+
+                    // Force reconnection to the new AP
+                    WiFi.disconnect();
+                    delay(100);
+                    WiFi.begin(ssid_, password_, channel, bssid);
+
+                    // Reset connection state to trigger on_connected callback again eventually
+                    was_connected_ = false;
+                } else {
+                    LOGD(TAG, "Already connected to best AP");
+                }
+            } else {
+                LOGD(TAG, "Current AP is good enough (Current: %d, Best: %d)", currentRSSI,
+                     bestRSSI);
+            }
+        } else {
+            LOGW(TAG, "Periodic scan failed or no networks found");
+        }
+        WiFi.scanDelete();
+    }
+#endif
 #else
     // Ethernet: nothing more to do
     return;

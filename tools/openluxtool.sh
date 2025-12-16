@@ -168,7 +168,7 @@ monitor_wifi() {
 upload_and_monitor_serial() {
     echo -e "${YELLOW}→ Upload via Serial + Monitor...${NC}"
     echo -e "${BLUE}ℹ Make sure ESP32 is connected via USB${NC}"
-    pio run -e esp32dev -t upload -t monitor
+    pio run -e openlux -t upload -t monitor
 }
 
 # Function for OTA upload + WiFi monitor

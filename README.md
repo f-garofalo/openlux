@@ -37,6 +37,7 @@
 - ✅ **Multi-client** - Up to 5 simultaneous connections
 - ✅ **Minimal Web Dashboard** - Basic status + command runner on port 80 (with basic auth)
 - ✅ **Dual Dongle Mode** - Can operate simultaneously with the official WiFi dongle using a breakout board
+- ✅ **Smart WiFi Roaming** - Automatically connects to the strongest AP and periodically scans for better signals (mesh-friendly)
 
 ---
 

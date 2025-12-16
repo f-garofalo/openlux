@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - Placeholder for future changes.
 
+## [1.0.3] - 2025-12-16
+### Added
+- **Smart WiFi Roaming**: Automatically scans and connects to the strongest Access Point (AP) on boot.
+- **Periodic WiFi Scan**: Periodically checks for better APs and roams if a significantly stronger signal is found (configurable interval/threshold).
+- **Fast Connect Mode**: Added `WIFI_FAST_CONNECT` option to skip scanning for faster boot times.
+- **Manual Roaming Command**: Added `wifi_roam` command to force an immediate scan and reconnection to the best AP.
+
 ## [1.0.2] - 2025-12-15
 ### Added
 - **SystemManager**: Centralized system operations (reboot, heap, uptime).

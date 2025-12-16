@@ -87,6 +87,25 @@
  */
 #define WIFI_TX_POWER WIFI_POWER_8_5dBm
 
+/**
+ * @brief Periodic WiFi Scan
+ *
+ * If enabled, the device will periodically scan for the configured SSID
+ * and reconnect if a stronger AP is found.
+ * Useful in mesh networks where the device might stick to a distant AP.
+ */
+#define WIFI_PERIODIC_SCAN_ENABLED 1           ///< Set to 1 to enable periodic scanning
+#define WIFI_PERIODIC_SCAN_INTERVAL_MS 3600000 ///< Scan interval in ms (default: 1 hour)
+#define WIFI_RSSI_THRESHOLD_DBM 5              ///< Minimum RSSI improvement to trigger reconnect
+
+/**
+ * @brief Fast WiFi Connection
+ *
+ * If enabled (1), skips the initial AP scan and connects to the first available AP.
+ * Faster boot, but might connect to a weaker signal in mesh networks.
+ */
+#define WIFI_FAST_CONNECT 0 ///< Set to 1 to disable initial scan
+
 // Ethernet (adjust pins/phy for your board if OPENLUX_USE_ETHERNET=1)
 #define ETH_PHY_TYPE ETH_PHY_LAN8720
 #define ETH_PHY_ADDR 0
@@ -175,7 +194,7 @@
 /**
  * @brief Firmware Information
  */
-#define FIRMWARE_VERSION "1.0.2"            ///< Semantic version
+#define FIRMWARE_VERSION "1.0.3"            ///< Semantic version
 #define FIRMWARE_NAME "OpenLux WiFi Bridge" ///< Project name
 #include "build_info.h"                     ///< Auto-generated build timestamp
 

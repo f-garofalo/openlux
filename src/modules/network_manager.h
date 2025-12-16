@@ -84,6 +84,7 @@ class NetworkManager {
     // Utilities
     void softReconnect();                  // disconnect + reconnect without power cycling WiFi
     void restartInterface();               // power-cycle WiFi STA and reconnect with stored creds
+    void forceScanAndConnect();            // Force a scan and connect to best AP
     void rebootDevice(const char* reason); // log and reboot
     bool startProvisioningPortal();        // start AP portal for WiFi config (blocking)
     void clearCredentials();               // wipe stored WiFi credentials (NVS)
@@ -102,9 +103,11 @@ class NetworkManager {
     NetworkManager(const NetworkManager&) = delete;
     NetworkManager& operator=(const NetworkManager&) = delete;
 
-    void connectWiFi();
+    void connectWiFi(bool force_scan = false);
     void checkConnection();
     void handleOTA();
+
+    int scanAndFindBestAP(int& bestRSSI);
 
     const char* ssid_ = nullptr;
     const char* password_ = nullptr;

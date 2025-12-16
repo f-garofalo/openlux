@@ -207,19 +207,16 @@ void CommandManager::registerCoreCommands() {
                     });
 
     // wifi_restart: full off/on cycle
-    registerCommand("wifi_restart", "Restart WiFi interface (off/on + reconnect)",
+    registerCommand("wifi_restart", "Restart WiFi interface",
                     [](const std::vector<String>&) -> CommandResult {
-                        static uint32_t last_restart_ms = 0;
-                        uint32_t now = millis();
-                        if (now - last_restart_ms < COMMAND_DEBOUNCE_MS) {
-                            uint32_t wait_ms = COMMAND_DEBOUNCE_MS - (now - last_restart_ms);
-                            return CommandResult{false, "WiFi restart debounced, try again in " +
-                                                            String(wait_ms / 1000) + "s"};
-                        }
-                        last_restart_ms = now;
-                        LOGI(CMD_TAG, "WiFi restart requested");
                         NetworkManager::getInstance().restartInterface();
-                        return CommandResult{true, "WiFi restart triggered"};
+                        return CommandResult{true, "WiFi interface restarting..."};
+                    });
+
+    registerCommand("wifi_roam", "Force WiFi scan and connect to best AP",
+                    [](const std::vector<String>&) -> CommandResult {
+                        NetworkManager::getInstance().forceScanAndConnect();
+                        return CommandResult{true, "WiFi roam initiated"};
                     });
 
     // wifi_reconnect: soft reconnect without power cycling
