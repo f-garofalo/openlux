@@ -107,6 +107,11 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
     }
     WiFi.mode(WIFI_STA);
 
+#ifdef WIFI_TX_POWER
+    WiFi.setTxPower(WIFI_TX_POWER);
+#endif
+
+
     // Provisioning path: if no SSID provided, start captive portal
     bool has_ssid = (ssid_ && strlen(ssid_) > 0);
     if (!has_ssid) {

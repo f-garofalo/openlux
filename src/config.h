@@ -66,6 +66,27 @@
 #define WIFI_PORTAL_TIMEOUT_S 300        ///< Portal timeout in seconds (5 minutes)
 #define OPENLUX_USE_ETHERNET 0           ///< Set to 1 to use onboard Ethernet instead of WiFi
 
+/**
+ * @brief WiFi TX Power
+ *
+ * Adjust transmission power to improve stability with certain APs.
+ * Options:
+ * - WIFI_POWER_19_5dBm (Max)
+ * - WIFI_POWER_19dBm
+ * - WIFI_POWER_18_5dBm
+ * - WIFI_POWER_17dBm
+ * - WIFI_POWER_15dBm
+ * - WIFI_POWER_13dBm
+ * - WIFI_POWER_11dBm
+ * - WIFI_POWER_8_5dBm (Recommended for stability issues)
+ * - WIFI_POWER_7dBm
+ * - WIFI_POWER_5dBm
+ * - WIFI_POWER_2dBm
+ * - WIFI_POWER_MINUS_1dBm
+ * Comment if unsure to use default.
+ */
+#define WIFI_TX_POWER WIFI_POWER_8_5dBm
+
 // Ethernet (adjust pins/phy for your board if OPENLUX_USE_ETHERNET=1)
 #define ETH_PHY_TYPE ETH_PHY_LAN8720
 #define ETH_PHY_ADDR 0

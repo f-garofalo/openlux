@@ -31,6 +31,9 @@ const char* kRootPage = R"HTML(
     .card { border: 1px solid #ddd; padding: 12px; margin-bottom: 12px; border-radius: 6px; }
     button { padding: 6px 12px; }
     input { padding: 6px; }
+    .footer { margin-top: 20px; font-size: 0.85em; color: #888; text-align: center; border-top: 1px solid #eee; padding-top: 10px; }
+    .footer a { color: #555; text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -46,6 +49,10 @@ const char* kRootPage = R"HTML(
     </div>
     <pre id="cmdRes"></pre>
   </div>
+  <div class="footer">
+    <a href="https://github.com/f-garofalo/openlux" target="_blank">OpenLux Repository</a>
+    <span id="ver_span"></span>
+  </div>
   <script>
     async function refresh() {
       try {
@@ -54,6 +61,10 @@ const char* kRootPage = R"HTML(
         try {
           const obj = JSON.parse(txt);
           document.getElementById('status').textContent = JSON.stringify(obj, null, 2);
+          let ver = obj.fw || obj.version || obj.firmware_version || obj.sw_version;
+          if (ver) {
+            document.getElementById('ver_span').textContent = ' | ' + ver;
+          }
         } catch (_) {
           document.getElementById('status').textContent = txt;
         }
