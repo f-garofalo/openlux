@@ -53,13 +53,7 @@ class NetworkManager {
     void setHostname(const char* hostname);
 
     // WiFi status
-    bool isConnected() const {
-#if OPENLUX_USE_ETHERNET
-        return eth_connected_ && ETH.linkUp();
-#else
-        return WiFi.status() == WL_CONNECTED;
-#endif
-    }
+    bool isConnected();
 #if OPENLUX_USE_ETHERNET
     IPAddress getIP() const { return ETH.localIP(); }
     String getSSID() const { return String("ETH"); }
@@ -89,6 +83,7 @@ class NetworkManager {
     bool startProvisioningPortal();        // start AP portal for WiFi config (blocking)
     void clearCredentials();               // wipe stored WiFi credentials (NVS)
     void markBootSuccessful();             // reset boot failure counter
+    bool validateConnection();             // Active check (TCP connect to gateway)
 
     // Callbacks
     void onConnected(const NetworkConnectedCallback& callback) { on_connected_ = callback; }
@@ -133,6 +128,8 @@ class NetworkManager {
     bool watchdog_restart_done_ = false;
     bool watchdog_portal_done_ = false;
     uint32_t last_scan_ms_ = 0;
+    uint32_t last_validation_ms_ = 0;
+    bool gateway_reachable_ = true;
     uint8_t boot_failures_ = 0;
 
     NetworkConnectedCallback on_connected_ = nullptr;
@@ -141,6 +138,7 @@ class NetworkManager {
 
     Preferences prefs_;
 
-    static constexpr uint32_t CONNECT_RETRY_DELAY = 5000;  // 5 seconds
-    static constexpr uint32_t STATUS_LOG_INTERVAL = 30000; // 30 seconds
+    static constexpr uint32_t CONNECT_RETRY_DELAY = 5000;     // 5 seconds
+    static constexpr uint32_t STATUS_LOG_INTERVAL = 30000;    // 30 seconds
+    static constexpr uint32_t VALIDATION_INTERVAL_MS = 60000; // 60 seconds
 };

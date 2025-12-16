@@ -402,6 +402,77 @@ void NetworkManager::connectWiFi(bool force_scan) {
 #endif
 }
 
+bool NetworkManager::validateConnection() {
+#if OPENLUX_USE_ETHERNET
+    if (!eth_connected_)
+        return false;
+    IPAddress gateway = ETH.gatewayIP();
+#else
+    if (WiFi.status() != WL_CONNECTED)
+        return false;
+    IPAddress gateway = WiFi.gatewayIP();
+#endif
+
+    if (gateway == IPAddress(0, 0, 0, 0)) {
+        LOGW(TAG, "Gateway IP is 0.0.0.0");
+        return false;
+    }
+
+    WiFiClient client;
+    client.setTimeout(1); // 1 second timeout
+
+    // Try connecting to gateway on port 80 (HTTP)
+    if (client.connect(gateway, 80)) {
+        client.stop();
+        return true;
+    }
+
+    // Try connecting to gateway on port 53 (DNS)
+    if (client.connect(gateway, 53)) {
+        client.stop();
+        return true;
+    }
+
+    LOGW(TAG, "Failed to connect to gateway %s (ports 80, 53)", gateway.toString().c_str());
+    return false;
+}
+
+bool NetworkManager::isConnected() {
+    bool link_up = false;
+#if OPENLUX_USE_ETHERNET
+    link_up = eth_connected_ && ETH.linkUp();
+#else
+    link_up = (WiFi.status() == WL_CONNECTED);
+#endif
+
+    if (!link_up) {
+        // If physical link is down, we are not connected.
+        // We reset the gateway reachable flag so that when link comes back,
+        // we assume it's good until proven otherwise (or until next check).
+        gateway_reachable_ = true;
+        return false;
+    }
+
+    // Link is up. Perform periodic active validation.
+    if (millis() - last_validation_ms_ > VALIDATION_INTERVAL_MS) {
+        last_validation_ms_ = millis();
+        bool reachable = validateConnection();
+
+        if (reachable != gateway_reachable_) {
+            if (!reachable) {
+                LOGW(TAG, "Active connection check failed! Gateway unreachable.");
+            } else {
+                LOGI(TAG, "Active connection check passed (recovered).");
+            }
+            gateway_reachable_ = reachable;
+        } else if (reachable) {
+            LOGD(TAG, "Active connection check passed.");
+        }
+    }
+
+    return gateway_reachable_;
+}
+
 void NetworkManager::checkConnection() {
     bool connected = isConnected();
     bool has_credentials = (ssid_ && strlen(ssid_) > 0);

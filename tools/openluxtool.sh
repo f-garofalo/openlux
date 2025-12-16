@@ -372,17 +372,15 @@ compile_with_quality() {
 }
 
 # ==============================================================================
-# MAIN - Gestione modalità di esecuzione
+# MAIN
 # ==============================================================================
 
-# Mostra banner
+
 show_banner
 
-# Gestione modalità comando diretto
 if [ $# -gt 0 ]; then
-    # Modalità non interattiva
     command=$1
-    shift  # Rimuove il primo argomento
+    shift
 
     case $command in
         build|compile)

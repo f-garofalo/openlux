@@ -12,6 +12,7 @@
 #include "logger.h"
 #include "network_manager.h"
 #include "ntp_manager.h"
+#include "protocol_bridge.h"
 #include "rs485_manager.h"
 #include "system_manager.h"
 #include "tcp_server.h"
@@ -97,6 +98,9 @@ void CommandManager::registerCoreCommands() {
                         msg.reserve(300);
                         msg += "Link: ";
                         msg += rs.is_inverter_link_up() ? "UP" : "DOWN";
+                        msg += " [REQ#";
+                        msg += String(ProtocolBridge::getInstance().get_total_requests());
+                        msg += "]";
                         msg += "\nRS485 SN: ";
                         msg += rs.get_detected_inverter_serial();
 
@@ -109,6 +113,51 @@ void CommandManager::registerCoreCommands() {
                             msg += net.getSSID();
                             msg += ", RSSI ";
                             msg += net.getRSSI();
+                            msg += " dBm, TX ";
+
+                            const auto pwr = WiFi.getTxPower();
+                            switch (pwr) {
+                                case 78:
+                                    msg += "19.5";
+                                    break;
+                                case 76:
+                                    msg += "19";
+                                    break;
+                                case 74:
+                                    msg += "18.5";
+                                    break;
+                                case 68:
+                                    msg += "17";
+                                    break;
+                                case 60:
+                                    msg += "15";
+                                    break;
+                                case 52:
+                                    msg += "13";
+                                    break;
+                                case 44:
+                                    msg += "11";
+                                    break;
+                                case 34:
+                                case 32:
+                                    msg += "8.5";
+                                    break;
+                                case 28:
+                                    msg += "7";
+                                    break;
+                                case 20:
+                                    msg += "5";
+                                    break;
+                                case 8:
+                                    msg += "2";
+                                    break;
+                                case -4:
+                                    msg += "-1";
+                                    break;
+                                default:
+                                    msg += String(pwr);
+                                    break;
+                            }
                             msg += " dBm)";
                         }
 

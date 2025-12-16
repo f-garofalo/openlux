@@ -71,14 +71,14 @@
  *
  * Adjust transmission power to improve stability with certain APs.
  * Options:
- * - WIFI_POWER_19_5dBm (Max)
+ * - WIFI_POWER_19_5dBm
  * - WIFI_POWER_19dBm
  * - WIFI_POWER_18_5dBm
  * - WIFI_POWER_17dBm
  * - WIFI_POWER_15dBm
  * - WIFI_POWER_13dBm
  * - WIFI_POWER_11dBm
- * - WIFI_POWER_8_5dBm (Recommended for stability issues)
+ * - WIFI_POWER_8_5dBm
  * - WIFI_POWER_7dBm
  * - WIFI_POWER_5dBm
  * - WIFI_POWER_2dBm
@@ -94,9 +94,9 @@
  * and reconnect if a stronger AP is found.
  * Useful in mesh networks where the device might stick to a distant AP.
  */
-#define WIFI_PERIODIC_SCAN_ENABLED 1           ///< Set to 1 to enable periodic scanning
-#define WIFI_PERIODIC_SCAN_INTERVAL_MS 3600000 ///< Scan interval in ms (default: 1 hour)
-#define WIFI_RSSI_THRESHOLD_DBM 5              ///< Minimum RSSI improvement to trigger reconnect
+#define WIFI_PERIODIC_SCAN_ENABLED 1                      ///< Set to 1 to enable periodic scanning
+#define WIFI_PERIODIC_SCAN_INTERVAL_MS ((40 * 60 * 1000)) ///< Scan interval in ms
+#define WIFI_RSSI_THRESHOLD_DBM 5 ///< Minimum RSSI improvement to trigger reconnect
 
 /**
  * @brief Fast WiFi Connection
