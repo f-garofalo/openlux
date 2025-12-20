@@ -26,6 +26,12 @@ TCPServer::~TCPServer() {
 }
 
 void TCPServer::begin(uint16_t port, size_t max_clients) {
+    // Prevent double initialization
+    if (server_ != nullptr) {
+        LOGW(TAG, "TCP Server already initialized, skipping");
+        return;
+    }
+
     port_ = port;
     max_clients_ = max_clients;
 
@@ -74,10 +80,9 @@ void TCPServer::stop() {
 
     // Disconnect all clients safely
     for (auto& tcp_client : clients_) {
-        if (tcp_client.client && tcp_client.client->connected()) {
-            tcp_client.client->close(true);
+        if (tcp_client.client) {
+            destroy_client(tcp_client.client);
         }
-        // Don't delete - AsyncTCP handles it
         tcp_client.client = nullptr;
     }
     clients_.clear();
@@ -87,6 +92,32 @@ void TCPServer::stop() {
     server_ = nullptr;
 
     LOGI(TAG, "TCP Server stopped");
+}
+
+void TCPServer::accept_connections() {
+    if (!server_) {
+        LOGW(TAG, "Cannot accept connections: server not initialized");
+        return;
+    }
+
+    if (!accepting_connections_) {
+        accepting_connections_ = true;
+        LOGI(TAG, "✓ Now accepting TCP connections on port %d", port_);
+    }
+}
+
+void TCPServer::reject_connections() {
+    if (!server_) {
+        return;
+    }
+
+    if (accepting_connections_) {
+        accepting_connections_ = false;
+        LOGI(TAG, "✗ Now rejecting new TCP connections");
+
+        // Optionally disconnect existing clients
+        disconnect_all_clients();
+    }
 }
 
 bool TCPServer::send_to_client(size_t client_id, const uint8_t* data, size_t length) {
@@ -116,20 +147,23 @@ bool TCPServer::send_to_all_clients(const uint8_t* data, size_t length) {
 
 String TCPServer::describe_clients() const {
     String out;
-    out.reserve(128);
+    // Reserve more space: ~50 chars per client + header
+    out.reserve(64 + clients_.size() * 50);
     out += "Clients: ";
-    out += String(clients_.size());
+    out += clients_.size(); // Implicit conversion, no temporary String
     out += "\n";
     for (size_t i = 0; i < clients_.size(); i++) {
         const auto& c = clients_[i];
-        out += " [" + String(i) + "] ";
+        out += " [";
+        out += i;
+        out += "] ";
         out += c.remote_ip;
         out += ":";
-        out += String(c.remote_port);
+        out += c.remote_port;
         out += " connected=";
         out += c.is_connected() ? "yes" : "no";
         out += " last_ms=";
-        out += String(c.last_activity);
+        out += c.last_activity;
         out += "\n";
     }
     return out;
@@ -137,8 +171,8 @@ String TCPServer::describe_clients() const {
 
 void TCPServer::disconnect_all_clients() {
     for (auto& tcp_client : clients_) {
-        if (tcp_client.client && tcp_client.client->connected()) {
-            tcp_client.client->close(true);
+        if (tcp_client.client) {
+            destroy_client(tcp_client.client);
         }
         tcp_client.client = nullptr;
     }
@@ -152,11 +186,22 @@ void TCPServer::disconnect_all_clients() {
 void TCPServer::handle_new_client(void* arg, AsyncClient* client) {
     TCPServer* server = static_cast<TCPServer*>(arg);
 
+    // Check if we are accepting connections
+    if (!server->accepting_connections_) {
+        LOGW(TAG, "Server not ready, rejecting connection from %s:%d",
+             client->remoteIP().toString().c_str(), client->remotePort());
+        client->close(true);
+        client->free();
+        delete client;
+        return;
+    }
+
     // Check if we can accept more clients
     if (server->clients_.size() >= server->max_clients_) {
         LOGW(TAG, "Max clients reached, rejecting connection from %s:%d",
              client->remoteIP().toString().c_str(), client->remotePort());
         client->close(true);
+        client->free();
         delete client;
         return;
     }
@@ -181,9 +226,11 @@ void TCPServer::handle_client_data(void* arg, AsyncClient* client, void* data, s
         return;
     }
 
-    // Append data to buffer
+    // Append data to buffer efficiently
     uint8_t* bytes = static_cast<uint8_t*>(data);
-    tcp_client->rx_buffer.insert(tcp_client->rx_buffer.end(), bytes, bytes + len);
+    const size_t old_size = tcp_client->rx_buffer.size();
+    tcp_client->rx_buffer.resize(old_size + len);
+    memcpy(&tcp_client->rx_buffer[old_size], bytes, len);
     tcp_client->last_activity = millis();
     server->total_bytes_rx_ += len;
 
@@ -198,8 +245,6 @@ void TCPServer::handle_client_disconnect(void* arg, AsyncClient* client) {
 
 void TCPServer::handle_client_error(void* arg, AsyncClient* client, int8_t error) {
     TCPServer* server = static_cast<TCPServer*>(arg);
-    // Log error here as we have the error code, but rely on remove_client for IP logging
-    // Note: client->remoteIP() might be invalid on error too
     server->remove_client(client);
 }
 
@@ -215,8 +260,9 @@ void TCPServer::handle_client_timeout(void* arg, AsyncClient* client, uint32_t t
 void TCPServer::add_client(AsyncClient* client) {
     TCPClient tcp_client;
     tcp_client.client = client;
-    tcp_client.connect_time = millis();
-    tcp_client.last_activity = millis();
+    const uint32_t now = millis(); // Single call
+    tcp_client.connect_time = now;
+    tcp_client.last_activity = now;
     tcp_client.remote_ip = client->remoteIP().toString();
     tcp_client.remote_port = client->remotePort();
 
@@ -242,24 +288,37 @@ void TCPServer::add_client(AsyncClient* client) {
     LOGI(TAG, "Client added (total: %d/%d)", clients_.size(), max_clients_);
 }
 
-void TCPServer::remove_client(const AsyncClient* client) {
+void TCPServer::remove_client(AsyncClient* client) {
     auto it = std::find_if(clients_.begin(), clients_.end(),
                            [client](const TCPClient& c) { return c.client == client; });
 
     if (it != clients_.end()) {
         LOGI(TAG, "Client disconnected: %s:%d", it->remote_ip.c_str(), it->remote_port);
 
-        // IMPORTANT: Don't delete client pointer!
-        // AsyncTCP manages the lifecycle and will delete it automatically
-        // Just remove from our vector
-        it->client = nullptr; // Clear pointer before erase
+        AsyncClient* async_client = it->client;
+        it->client = nullptr;
         clients_.erase(it);
+
+        destroy_client(async_client);
 
         LOGI(TAG, "Client removed (remaining: %d)", clients_.size());
     } else {
-        // This is normal if we already removed it (e.g. in check_client_timeouts)
         LOGD(TAG, "Client disconnected (already removed)");
+        destroy_client(client);
     }
+}
+
+void TCPServer::destroy_client(AsyncClient* client) {
+    if (!client) {
+        return;
+    }
+
+    if (client->connected()) {
+        client->close(true);
+    }
+
+    client->free();
+    delete client;
 }
 
 TCPClient* TCPServer::find_client(const AsyncClient* client) {
@@ -306,7 +365,7 @@ void TCPServer::process_client_data(TCPClient* tcp_client) {
 }
 
 void TCPServer::check_client_timeouts() {
-    uint32_t now = millis();
+    const uint32_t now = millis(); // Single call for all clients
 
     for (auto it = clients_.begin(); it != clients_.end();) {
         if (now - it->last_activity > CLIENT_TIMEOUT_MS) {
@@ -320,10 +379,7 @@ void TCPServer::check_client_timeouts() {
             it->client = nullptr;
             it = clients_.erase(it);
 
-            // Close the connection to ensure AsyncTCP cleans up resources
-            if (c && c->connected()) {
-                c->close();
-            }
+            destroy_client(c);
 
             LOGI(TAG, "Client removed due to timeout (remaining: %d)", clients_.size());
         } else {

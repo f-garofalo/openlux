@@ -14,6 +14,7 @@
 
 #include <cstdarg>
 
+
 Logger::Logger() : mutex_(xSemaphoreCreateRecursiveMutex()), buffer_{} {}
 
 Logger& Logger::getInstance() {
@@ -33,6 +34,7 @@ Logger::~Logger() {
 void Logger::begin(uint32_t baud_rate) {
     // Apply default log level from config
     level_ = static_cast<LogLevel>(OPENLUX_LOG_LEVEL);
+
 
     Serial.begin(baud_rate);
 
@@ -136,6 +138,7 @@ void Logger::log(const char* level, const char* color, const char* tag, const ch
 
     Serial.println(serial_line);
 
+
     // Build log line for Telnet (always with colors for better terminal support)
     char telnet_line[600];
     snprintf(telnet_line, sizeof(telnet_line), "%s[%02lu:%02lu:%02lu][%s][%s]:%s %s", color, log_h,
@@ -197,14 +200,21 @@ void Logger::processClients() {
             if (telnet_clients_.size() < 5) {
                 telnet_clients_.push_back(new_client);
 
-                String welcome = "\n";
+                String welcome;
+                welcome.reserve(250); // Pre-allocate for entire message
+                welcome += "\n";
                 welcome += "================================================\n";
                 welcome += "      OpenLux Remote Logging Session          \n";
                 welcome += "================================================\n";
-                welcome += String("FW: ") + FIRMWARE_NAME + " v" + FIRMWARE_VERSION + "\n";
-                welcome += String("Built: ") + BUILD_TIMESTAMP + "\n";
-                welcome += "Connected from: " + new_client.remoteIP().toString() + "\n";
-                welcome += "Type 'q' to disconnect\n\n";
+                welcome += "FW: ";
+                welcome += FIRMWARE_NAME;
+                welcome += " v";
+                welcome += FIRMWARE_VERSION;
+                welcome += "\nBuilt: ";
+                welcome += BUILD_TIMESTAMP;
+                welcome += "\nConnected from: ";
+                welcome += new_client.remoteIP().toString();
+                welcome += "\nType 'q' to disconnect\n\n";
 
                 new_client.print(welcome);
 

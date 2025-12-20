@@ -194,3 +194,4 @@ docs/PROTOCOL_DETAILS.md
 
 # Tools should be committed
 !tools/**
+src/config.local.h

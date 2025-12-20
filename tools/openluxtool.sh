@@ -212,8 +212,8 @@ upload_ota_and_monitor_wifi() {
     if [ $? -eq 0 ]; then
         echo ""
         echo -e "${GREEN}✓ Upload completed!${NC}"
-        echo -e "${YELLOW}→ Waiting 5 seconds for ESP32 reboot...${NC}"
-        sleep 5
+        echo -e "${YELLOW}→ Waiting 2 seconds for ESP32 reboot...${NC}"
+        sleep 2
 
         echo -e "${YELLOW}→ Telnet connection to ${target_host}:${TELNET_PORT}...${NC}"
         echo -e "${BLUE}ℹ Press Ctrl+C to disconnect${NC}"

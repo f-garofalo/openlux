@@ -29,6 +29,9 @@
 using NetworkConnectedCallback = std::function<void()>;
 using NetworkDisconnectedCallback = std::function<void()>;
 using OTAProgressCallback = std::function<void(unsigned int progress, unsigned int total)>;
+using OTAStartCallback = std::function<void()>;
+using OTAEndCallback = std::function<void()>;
+using OTAErrorCallback = std::function<void()>;
 
 /**
  * @brief WiFi and OTA Management
@@ -91,6 +94,9 @@ class NetworkManager {
         on_disconnected_ = callback;
     }
     void onOTAProgress(const OTAProgressCallback& callback) { on_ota_progress_ = callback; }
+    void onOTAStart(const OTAStartCallback& callback) { on_ota_start_ = callback; }
+    void onOTAEnd(const OTAEndCallback& callback) { on_ota_end_ = callback; }
+    void onOTAError(const OTAErrorCallback& callback) { on_ota_error_ = callback; }
 
   private:
     NetworkManager() = default;
@@ -99,8 +105,16 @@ class NetworkManager {
     NetworkManager& operator=(const NetworkManager&) = delete;
 
     void connectWiFi(bool force_scan = false);
+
+    // State
+    bool connected_ = false;
+
     void checkConnection();
     void handleOTA();
+
+    void runTask();
+    static void taskTrampoline(void* arg);
+    void startNetworkTask();
 
     int scanAndFindBestAP(int& bestRSSI);
 
@@ -135,10 +149,13 @@ class NetworkManager {
     NetworkConnectedCallback on_connected_ = nullptr;
     NetworkDisconnectedCallback on_disconnected_ = nullptr;
     OTAProgressCallback on_ota_progress_ = nullptr;
+    OTAStartCallback on_ota_start_ = nullptr;
+    OTAEndCallback on_ota_end_ = nullptr;
+    OTAErrorCallback on_ota_error_ = nullptr;
 
     Preferences prefs_;
 
-    static constexpr uint32_t CONNECT_RETRY_DELAY = 5000;     // 5 seconds
-    static constexpr uint32_t STATUS_LOG_INTERVAL = 30000;    // 30 seconds
-    static constexpr uint32_t VALIDATION_INTERVAL_MS = 60000; // 60 seconds
+    static constexpr uint32_t CONNECT_RETRY_DELAY = 5000;          // 5 seconds
+    static constexpr uint32_t STATUS_LOG_INTERVAL = 30000;         // 30 seconds
+    static constexpr uint32_t VALIDATION_INTERVAL_MS = 120 * 1000; // 120 seconds
 };

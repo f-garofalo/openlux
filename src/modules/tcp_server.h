@@ -57,6 +57,11 @@ class TCPServer {
     bool is_running() const { return server_ != nullptr; }
     size_t get_client_count() const { return clients_.size(); }
     uint16_t get_port() const { return port_; }
+    bool is_accepting_connections() const { return accepting_connections_; }
+
+    // Connection control
+    void accept_connections();
+    void reject_connections();
 
     // Send data to specific client
     bool send_to_client(size_t client_id, const uint8_t* data, size_t length);
@@ -86,16 +91,18 @@ class TCPServer {
 
     // Internal methods
     void add_client(AsyncClient* client);
-    void remove_client(const AsyncClient* client);
+    void remove_client(AsyncClient* client);
     TCPClient* find_client(const AsyncClient* client);
     void process_client_data(TCPClient* tcp_client);
     void check_client_timeouts();
+    void destroy_client(AsyncClient* client);
 
     AsyncServer* server_ = nullptr;
     std::vector<TCPClient> clients_;
     size_t max_clients_ = 5;
     uint16_t port_ = 8000;
     ProtocolBridge* bridge_ = nullptr;
+    bool accepting_connections_ = false;
 
     // Statistics
     uint32_t total_connections_ = 0;

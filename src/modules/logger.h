@@ -47,6 +47,7 @@ class Logger {
     bool isTelnetRunning() const { return telnet_server_ != nullptr; }
     int getTelnetClientCount() const { return telnet_clients_.size(); }
 
+
   private:
     Logger();
     ~Logger();

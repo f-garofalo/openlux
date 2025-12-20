@@ -20,6 +20,22 @@ NetworkManager& NetworkManager::getInstance() {
     return instance;
 }
 
+void NetworkManager::taskTrampoline(void* arg) {
+    NetworkManager* nm = static_cast<NetworkManager*>(arg);
+    while (true) {
+        nm->runTask();
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+void NetworkManager::runTask() {
+    checkConnection();
+
+    if (ota_enabled_ && !ota_in_progress_) {
+        handleOTA();
+    }
+}
+
 void NetworkManager::begin(const char* ssid, const char* password, const char* hostname) {
     // Track boot attempts to detect repeated failed boots
     prefs_.begin("openlux", false);
@@ -42,6 +58,7 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
         return;
 #endif
     }
+    prefs_.end();
 
     use_ethernet_ = (OPENLUX_USE_ETHERNET != 0);
 
@@ -94,6 +111,10 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
         } else {
             LOGI(TAG, "ETH init requested");
         }
+        BaseType_t core = NETWORK_TASK_CORE;
+        if (core < 0)
+            core = tskNO_AFFINITY;
+        xTaskCreatePinnedToCore(taskTrampoline, "NetMgrTask", 4096, this, 1, NULL, core);
         return;
     }
 #endif
@@ -134,6 +155,10 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
             LOGI(TAG, "✓ WiFi connected via portal");
             LOGI(TAG, "  IP: %s", WiFi.localIP().toString().c_str());
         }
+        BaseType_t core = NETWORK_TASK_CORE;
+        if (core < 0)
+            core = tskNO_AFFINITY;
+        xTaskCreatePinnedToCore(taskTrampoline, "NetMgrTask", 4096, this, 1, NULL, core);
         return;
     }
 
@@ -147,15 +172,15 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
 
     // Start connection
     connectWiFi();
+    BaseType_t core = NETWORK_TASK_CORE;
+    if (core < 0)
+        core = tskNO_AFFINITY;
+    xTaskCreatePinnedToCore(taskTrampoline, "NetMgrTask", 4096, this, 1, nullptr, core);
 #endif
 }
 
 void NetworkManager::loop() {
-    checkConnection();
-
-    if (ota_enabled_ && !ota_in_progress_) {
-        handleOTA();
-    }
+    // Logic moved to runTask() executed by FreeRTOS task on Core 0
 }
 
 void NetworkManager::setStaticIP(IPAddress ip, IPAddress gateway, IPAddress subnet,
@@ -189,21 +214,36 @@ void NetworkManager::setupOTA(const char* hostname, const char* password, uint16
         ota_in_progress_ = true;
         String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
         LOGI(TAG, "OTA Update Started: %s", type.c_str());
+
+        // Call user callback
+        if (on_ota_start_) {
+            on_ota_start_();
+        }
     });
 
     ArduinoOTA.onEnd([this]() {
+        Preferences local_prefs;
+        local_prefs.begin("openlux", false);
+        local_prefs.putString("reboot_reason", "OTA");
+        local_prefs.end();
         LOGI(TAG, "OTA Update Finished");
         ota_in_progress_ = false;
+
+        // Call user callback
+        if (on_ota_end_) {
+            on_ota_end_();
+        }
     });
 
     ArduinoOTA.onProgress([this](unsigned int progress, unsigned int total) {
         static uint32_t last_log = 0;
+        const uint32_t now = millis();
         uint32_t percent = (progress * 100) / total;
 
         // Log every 10%
-        if (millis() - last_log > 1000 || percent == 100) {
+        if (now - last_log > 1000 || percent == 100) {
             LOGI(TAG, "OTA Progress: %u%%", percent);
-            last_log = millis();
+            last_log = now;
         }
 
         if (on_ota_progress_) {
@@ -211,7 +251,7 @@ void NetworkManager::setupOTA(const char* hostname, const char* password, uint16
         }
     });
 
-    ArduinoOTA.onError([](ota_error_t error) {
+    ArduinoOTA.onError([this](ota_error_t error) {
         LOGE(TAG, "OTA Error[%u]: ", error);
         if (error == OTA_AUTH_ERROR)
             LOGE(TAG, "Auth Failed");
@@ -223,6 +263,13 @@ void NetworkManager::setupOTA(const char* hostname, const char* password, uint16
             LOGE(TAG, "Receive Failed");
         else if (error == OTA_END_ERROR)
             LOGE(TAG, "End Failed");
+
+        ota_in_progress_ = false;
+
+        // Call user callback
+        if (on_ota_error_) {
+            on_ota_error_();
+        }
     });
 
     ArduinoOTA.begin();
@@ -289,7 +336,9 @@ void NetworkManager::markBootSuccessful() {
         return;
     if (boot_failures_ != 0) {
         boot_failures_ = 0;
+        prefs_.begin("openlux", false);
         prefs_.putUChar("boot_fail", 0);
+        prefs_.end();
         LOGI(TAG, "Boot marked successful, counter reset");
     }
 }
@@ -298,6 +347,9 @@ void NetworkManager::markBootSuccessful() {
 bool NetworkManager::startProvisioningPortal() {
     LOGI(TAG, "Starting provisioning portal (AP)");
     portal_opened_once_ = true;
+
+    // Disable watchdog during blocking portal
+    SystemManager::getInstance().disableWatchdog();
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect(true, true);
@@ -319,6 +371,10 @@ bool NetworkManager::startProvisioningPortal() {
     } else {
         LOGE(TAG, "WiFi portal timeout or failed connection");
     }
+
+    // Re-enable watchdog
+    SystemManager::getInstance().enableWatchdog();
+
     return res;
 }
 #else
@@ -415,25 +471,52 @@ bool NetworkManager::validateConnection() {
 
     if (gateway == IPAddress(0, 0, 0, 0)) {
         LOGW(TAG, "Gateway IP is 0.0.0.0");
-        return false;
+        return true; // Assume reachable
     }
 
-    WiFiClient client;
-    client.setTimeout(1); // 1 second timeout
+    {
+        WiFiClient client;
+        client.setNoDelay(true);
+        client.setTimeout(300);
 
-    // Try connecting to gateway on port 80 (HTTP)
-    if (client.connect(gateway, 80)) {
-        client.stop();
-        return true;
-    }
+        if (client.connect(gateway, 53, 300)) {
+            client.stop();
+            return true;
+        }
+    } // client destructor called here - clean close
 
-    // Try connecting to gateway on port 53 (DNS)
-    if (client.connect(gateway, 53)) {
-        client.stop();
-        return true;
-    }
+#if defined(MQTT_HOST)
+    {
+        WiFiClient client;
+        client.setNoDelay(true);
+        client.setTimeout(150);
 
-    LOGW(TAG, "Failed to connect to gateway %s (ports 80, 53)", gateway.toString().c_str());
+        if (client.connect(MQTT_HOST, MQTT_PORT, 150)) {
+            client.stop();
+            LOGD(TAG, "Connection validated via MQTT broker");
+            return true;
+        }
+        LOGW(TAG, "Failed to connect to gateway %s (port 53) and MQTT %s:%d",
+             gateway.toString().c_str(), MQTT_HOST, MQTT_PORT);
+
+    } // client destructor called here - clean close
+
+#else
+    {
+        WiFiClient client;
+        client.setNoDelay(true);
+        client.setTimeout(150);
+
+        if (client.connect(gateway, 80, 150)) {
+            client.stop();
+            return true;
+        }
+        LOGW(TAG, "Failed to connect to gateway %s (ports 53, 80)", gateway.toString().c_str());
+    } // client destructor called here - clean close
+
+
+#endif
+
     return false;
 }
 
@@ -454,13 +537,25 @@ bool NetworkManager::isConnected() {
     }
 
     // Link is up. Perform periodic active validation.
-    if (millis() - last_validation_ms_ > VALIDATION_INTERVAL_MS) {
-        last_validation_ms_ = millis();
-        bool reachable = validateConnection();
+    const uint32_t now = millis();
+
+    // Adaptive validation interval: check less frequently during problems to reduce blocking
+    uint32_t validation_interval = VALIDATION_INTERVAL_MS; // Default 60s
+    if (!gateway_reachable_) {
+        validation_interval = VALIDATION_INTERVAL_MS * 3; // 180s when gateway is unreachable
+    }
+
+    if (now - last_validation_ms_ > validation_interval) {
+        last_validation_ms_ = now;
+        const bool reachable = validateConnection();
 
         if (reachable != gateway_reachable_) {
             if (!reachable) {
                 LOGW(TAG, "Active connection check failed! Gateway unreachable.");
+                auto& sys = SystemManager::getInstance();
+                LOGW(TAG, "  Heap free=%u bytes, min=%u bytes, max_alloc=%u bytes, uptime=%lus",
+                     sys.getFreeHeap(), sys.getMinFreeHeap(), sys.getMaxAllocHeap(),
+                     sys.getUptime());
             } else {
                 LOGI(TAG, "Active connection check passed (recovered).");
             }
@@ -518,17 +613,19 @@ void NetworkManager::checkConnection() {
     }
 
     // Periodic status log
-    if (connected && (millis() - last_status_log_ > STATUS_LOG_INTERVAL)) {
+    const uint32_t now_status = millis();
+    if (connected && (now_status - last_status_log_ > STATUS_LOG_INTERVAL)) {
         LOGD(TAG, "WiFi Status: IP=%s, RSSI=%d dBm", WiFi.localIP().toString().c_str(),
              WiFi.RSSI());
-        last_status_log_ = millis();
+        last_status_log_ = now_status;
     }
 
 #if WIFI_PERIODIC_SCAN_ENABLED
     // Periodic scan for better AP
-    if (connected && (millis() - last_scan_ms_ > WIFI_PERIODIC_SCAN_INTERVAL_MS)) {
+    const uint32_t now_scan = millis();
+    if (connected && (now_scan - last_scan_ms_ > WIFI_PERIODIC_SCAN_INTERVAL_MS)) {
         LOGI(TAG, "Periodic WiFi scan: checking for better AP...");
-        last_scan_ms_ = millis();
+        last_scan_ms_ = now_scan;
 
         int bestRSSI;
         int bestNetworkIndex = scanAndFindBestAP(bestRSSI);

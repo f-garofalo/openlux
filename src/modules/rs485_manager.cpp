@@ -230,6 +230,8 @@ static LuxParseResult parse_read_response(const uint8_t* data, size_t length, ui
         result.error_message = "CRC mismatch";
         LOGW(TAG, "%s: calculated=0x%04X, received=0x%04X", result.error_message.c_str(),
              calculated_crc, received_crc);
+        LOGW(TAG, "   Packet [%d bytes]: %s", length,
+             LuxProtocol::format_hex(data, min(length, (size_t) 32)).c_str());
         // continue parsing anyway
     }
 
@@ -429,6 +431,21 @@ RS485Manager& RS485Manager::getInstance() {
     return instance;
 }
 
+const char* RS485Manager::function_code_to_string(LuxFunctionCode func) {
+    switch (func) {
+        case LuxFunctionCode::READ_HOLDING:
+            return "READ_HOLD";
+        case LuxFunctionCode::READ_INPUT:
+            return "READ_INPUT";
+        case LuxFunctionCode::WRITE_SINGLE:
+            return "WRITE_SINGLE";
+        case LuxFunctionCode::WRITE_MULTI:
+            return "WRITE_MULTI";
+        default:
+            return "UNKNOWN";
+    }
+}
+
 void RS485Manager::begin(HardwareSerial& serial, int8_t tx_pin, int8_t rx_pin, int8_t de_pin,
                          uint32_t baud_rate) {
     serial_ = &serial;
@@ -444,6 +461,11 @@ void RS485Manager::begin(HardwareSerial& serial, int8_t tx_pin, int8_t rx_pin, i
 
     // Initialize UART
     serial_->begin(baud_rate, SERIAL_8N1, rx_pin, tx_pin);
+
+    // Set short timeout for readBytes() to avoid blocking the loop
+    // At 19200 baud: 1 byte ≈ 0.52ms, 18 bytes ≈ 9.4ms
+    // 15ms timeout is safe and prevents long blocking
+    serial_->setTimeout(15);
 
     // Initialize DE/RE pin if provided
     if (de_pin_ >= 0) {
@@ -598,6 +620,7 @@ bool RS485Manager::should_ignore_packet(const std::vector<uint8_t>& data) {
     if (LuxProtocol::is_request(data.data(), data.size())) {
         LOGD(TAG, "Ignoring request packet from another master (starts with 0x00): %s",
              LuxProtocol::format_hex(data.data(), data.size()).c_str());
+        ignored_packets_++;
         return true;
     }
 
@@ -606,6 +629,7 @@ bool RS485Manager::should_ignore_packet(const std::vector<uint8_t>& data) {
     if (!waiting_response_) {
         LOGD(TAG, "Ignoring packet while not waiting for response: %s",
              LuxProtocol::format_hex(data.data(), data.size()).c_str());
+        ignored_packets_++;
         return true;
     }
 
@@ -613,11 +637,22 @@ bool RS485Manager::should_ignore_packet(const std::vector<uint8_t>& data) {
 }
 
 void RS485Manager::process_incoming_data() {
-    // Read available bytes
-    while (serial_->available()) {
-        const uint8_t byte = serial_->read();
-        rx_buffer_.push_back(byte);
-        last_rx_time_ = millis();
+    // Read all available bytes using optimized readBytes()
+    const int available = serial_->available();
+    if (available > 0) {
+        const size_t old_size = rx_buffer_.size();
+
+        // Pre-allocate space for incoming bytes
+        rx_buffer_.resize(old_size + available);
+        const size_t bytes_read = serial_->readBytes(&rx_buffer_[old_size], available);
+
+        // Adjust buffer to actual bytes read
+        rx_buffer_.resize(old_size + bytes_read);
+
+        // Update timestamp only if we actually read something
+        if (bytes_read > 0) {
+            last_rx_time_ = millis();
+        }
     }
 
     // Check if we have accumulated a complete frame
@@ -652,7 +687,7 @@ void RS485Manager::process_incoming_data() {
         waiting_response_ = false;
     }
 
-    // Timeout: clear buffer if too old
+    /*// Timeout: clear buffer if too old
     if (!rx_buffer_.empty() && (millis() - last_rx_time_) > 500) {
         LOGW(TAG, "RX buffer timeout, clearing %d bytes", rx_buffer_.size());
         rx_buffer_.clear();
@@ -667,7 +702,7 @@ void RS485Manager::process_incoming_data() {
             serial_probe_backoff_ms_ = std::min(serial_probe_backoff_ms_ * 2,
                                                 static_cast<uint32_t>(RS485_PROBE_BACKOFF_MAX_MS));
         }
-    }
+    }*/
 }
 
 void RS485Manager::handle_response(const std::vector<uint8_t>& data) {
@@ -704,15 +739,7 @@ void RS485Manager::handle_response(const std::vector<uint8_t>& data) {
 
     if (last_result_.success) {
         // Build operation description
-        const char* func_name = "UNKNOWN";
-        if (last_result_.function_code == LuxFunctionCode::READ_HOLDING)
-            func_name = "READ_HOLD";
-        else if (last_result_.function_code == LuxFunctionCode::READ_INPUT)
-            func_name = "READ_INPUT";
-        else if (last_result_.function_code == LuxFunctionCode::WRITE_SINGLE)
-            func_name = "WRITE_SINGLE";
-        else if (last_result_.function_code == LuxFunctionCode::WRITE_MULTI)
-            func_name = "WRITE_MULTI";
+        const char* func_name = function_code_to_string(last_result_.function_code);
 
         // Build value preview
         String value_preview = "";
@@ -771,9 +798,19 @@ void RS485Manager::handle_response(const std::vector<uint8_t>& data) {
 }
 
 void RS485Manager::handle_timeout() {
-    LOGW(TAG, "Response timeout (%d ms)", response_timeout_ms_);
-    waiting_response_ = false;
+    if (!waiting_response_) {
+        return;
+    }
     timeout_count_++;
+
+    const char* func_name = function_code_to_string(expected_function_code_);
+
+    LOGW(TAG, "Response timeout (%d ms) | func=%s (0x%02X) start_reg=%d", response_timeout_ms_,
+         func_name, static_cast<uint8_t>(expected_function_code_), expected_start_reg_);
+    LOGW(TAG, "  Timeout stats: total=%d, failed=%d, success=%d", timeout_count_, failed_responses_,
+         successful_responses_);
+
+    waiting_response_ = false;
 
     last_result_.success = false;
     last_result_.error_message = "Timeout";

@@ -98,8 +98,16 @@ void CommandManager::registerCoreCommands() {
                         msg.reserve(300);
                         msg += "Link: ";
                         msg += rs.is_inverter_link_up() ? "UP" : "DOWN";
-                        msg += " [REQ#";
+                        msg += " [WEB-REQ#";
                         msg += String(ProtocolBridge::getInstance().get_total_requests());
+                        msg += " RS485-REQ#";
+                        msg += String(rs.get_total_requests());
+                        msg += " ERR#";
+                        msg += String(rs.get_failed_responses());
+                        msg += " TIMEOUT#";
+                        msg += String(rs.get_timeout_count());
+                        msg += " IGNORATED#";
+                        msg += String(rs.get_ignored_packets());
                         msg += "]";
                         msg += "\nRS485 SN: ";
                         msg += rs.get_detected_inverter_serial();
@@ -200,6 +208,10 @@ void CommandManager::registerCoreCommands() {
 #ifdef ENABLE_TELNET
                         msg += "TELNET ";
 #endif
+#ifdef ENABLE_MQTT
+                        msg += "MQTT ";
+#endif
+
 
                         msg += "\nLast Reboot: ";
                         msg += sys.getLastRebootReason();
@@ -300,7 +312,8 @@ void CommandManager::registerCoreCommands() {
                             return CommandResult{true, "No networks found"};
                         }
                         String out;
-                        out.reserve(256);
+                        const int networks = min(n, 10); // Limit to 10
+                        out.reserve(networks * 80 + 50); // ~80 char/network + header
                         auto sig_icon = [](int rssi) -> const char* {
                             if (rssi >= -50)
                                 return "[####]";
@@ -312,15 +325,19 @@ void CommandManager::registerCoreCommands() {
                                 return "[#   ]";
                             return "[.   ]";
                         };
-                        for (int i = 0; i < n; i++) {
-                            out += String(i) + ") " + WiFi.SSID(i) + " " + sig_icon(WiFi.RSSI(i)) +
-                                   " (" + WiFi.RSSI(i) + " dBm)";
+                        for (int i = 0; i < networks; i++) {
+                            out += i;
+                            out += ") ";
+                            out += WiFi.SSID(i);
+                            out += " ";
+                            out += sig_icon(WiFi.RSSI(i));
+                            out += " (";
+                            out += WiFi.RSSI(i);
+                            out += " dBm)";
                             if (WiFi.encryptionType(i) != WIFI_AUTH_OPEN) {
                                 out += " [sec]";
                             }
                             out += "\n";
-                            if (i >= 9)
-                                break; // limit output
                         }
                         return CommandResult{true, out};
                     });
@@ -353,17 +370,17 @@ void CommandManager::registerCoreCommands() {
                     [](const std::vector<String>&) -> CommandResult {
                         const auto& sys = SystemManager::getInstance();
                         String out;
-                        out.reserve(96);
+                        out.reserve(150); // Increased for PSRAM info
                         out += "Heap free: ";
-                        out += String(sys.getFreeHeap());
+                        out += sys.getFreeHeap();
                         out += " bytes\nHeap max alloc: ";
-                        out += String(sys.getMaxAllocHeap());
+                        out += sys.getMaxAllocHeap();
                         out += " bytes";
 #ifdef BOARD_HAS_PSRAM
                         out += "\nPSRAM size: ";
-                        out += String(sys.getPsramSize());
+                        out += sys.getPsramSize();
                         out += " bytes\nPSRAM free: ";
-                        out += String(sys.getFreePsram());
+                        out += sys.getFreePsram();
                         out += " bytes";
 #endif
                         return CommandResult{true, out};

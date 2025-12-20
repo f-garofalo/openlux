@@ -38,6 +38,7 @@
 - ✅ **Minimal Web Dashboard** - Basic status + command runner on port 80 (with basic auth)
 - ✅ **Dual Dongle Mode** - Can operate simultaneously with the official WiFi dongle using a breakout board
 - ✅ **Smart WiFi Roaming** - Automatically connects to the strongest AP and periodically scans for better signals (mesh-friendly)
+- ✅ **MQTT Support** - Publishes telemetry (Status, Uptime, IP) available in Home Assistant (Auto-Discovery) and accepts remote commands (reboot, status)
 
 ---
 
@@ -142,6 +143,17 @@ OpenLux works with the [LuxPower Modbus Integration](https://github.com/ant0nkr/
 1. Install via HACS: `https://github.com/ant0nkr/luxpower-ha-integration`
 2. Add Integration → "LuxPower Inverter (Modbus)"
 3. Configure: IP (`openlux.local`), Port (`8000`), Serial Numbers
+
+### MQTT Sensors (Optional)
+If you enable MQTT in `config.h`, OpenLux will automatically create diagnostic sensors in Home Assistant via MQTT Auto-Discovery. These telemetry sensors include:
+- Device Status (Online/Offline)
+- Uptime
+- WiFi Signal Strength (RSSI)
+- IP Address
+- Free Heap Memory
+- Last Reboot Reason
+
+The sensors will appear automatically in Home Assistant under the MQTT integration without any manual configuration.
 
 ---
 

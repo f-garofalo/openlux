@@ -32,6 +32,9 @@
 #ifdef ENABLE_WEB_DASH
 #include "modules/web_server.h"
 #endif
+#ifdef ENABLE_MQTT
+#include "modules/mqtt_manager.h"
+#endif
 
 #include <Arduino.h>
 #include <Esp.h>
@@ -67,6 +70,12 @@ void setupWebServer();
 #define WEB_LOOP()
 #endif
 
+#ifdef ENABLE_MQTT
+#define MQTT_LOOP() MqttManager::getInstance().loop()
+#else
+#define MQTT_LOOP()
+#endif
+
 /**
  * @brief Initial setup - runs once at boot
  */
@@ -77,16 +86,13 @@ void setup() {
     // Initialize system manager (reads reboot reason)
     sys.begin();
 
+    // Setup RS485 (can start immediately, no network required)
+    setupRS485();
+
     CommandManager::getInstance().registerCoreCommands();
 
     // Print welcome banner
     printWelcomeBanner();
-
-    // Print system information
-    printSystemInfo();
-
-    // Setup RS485 (can start immediately, no network required)
-    setupRS485();
 
     // Setup Wi-Fi (with callbacks for network services)
     setupWiFi();
@@ -95,6 +101,16 @@ void setup() {
     setupWebServer();
 #endif
 
+#ifdef ENABLE_MQTT
+    MqttManager::getInstance().begin();
+#endif
+
+    // Enable System Watchdog
+    sys.enableWatchdog();
+
+    // Print system information
+    printSystemInfo();
+
     LOGI(TAG, "Setup completed - entering main loop...");
 }
 
@@ -102,6 +118,9 @@ void setup() {
  * @brief Main loop - runs continuously
  */
 void loop() {
+    // System health check (watchdog, heap)
+    sys.loop();
+
     // Update Wi-Fi manager (handles reconnections and OTA)
     network.loop();
 
@@ -127,6 +146,8 @@ void loop() {
 #ifdef ENABLE_WEB_DASH
     WebServerManager::getInstance().loop();
 #endif
+
+    MQTT_LOOP();
 
     // Feed watchdog and add small delay
     yield(); // Feed watchdog timer
@@ -185,6 +206,9 @@ void setupWiFi() {
     network.onConnected([]() {
         LOGI(TAG, "Network connected - initializing services...");
 
+        // Setup mDNS once the interface has an IP
+        NetworkManager::getInstance().setupMDNS(WIFI_HOSTNAME);
+
 #ifdef ENABLE_NTP
         // Setup NTP time sync (must be before other services)
         setupNTP();
@@ -205,9 +229,6 @@ void setupWiFi() {
 
         // Setup Protocol Bridge
         setupBridge();
-
-        // Setup mDNS
-        network.setupMDNS(WIFI_HOSTNAME);
 
         LOGI(TAG, "All services initialized!");
         Serial.println();
@@ -230,6 +251,10 @@ void setupWiFi() {
         Serial.println("============================================");
 
         Serial.println();
+
+        // Now we can accept TCP connections
+        LOGI(TAG, "Enabling TCP connection acceptance...");
+        tcp_server.accept_connections();
     });
 
     // Callback when Wi-Fi disconnects
@@ -247,6 +272,24 @@ void setupOTA() {
     LOGI(TAG, "Configuring OTA...");
 
     network.setupOTA(OTA_HOSTNAME, OTA_PASSWORD, OTA_PORT);
+
+    // OTA start callback - reject TCP connections during update
+    network.onOTAStart([]() {
+        LOGI(TAG, "OTA started - rejecting new TCP connections");
+        tcp_server.reject_connections();
+    });
+
+    // OTA end callback - accept TCP connections after successful update
+    network.onOTAEnd([]() {
+        LOGI(TAG, "OTA completed successfully");
+        // Device will reboot, no need to re-accept connections
+    });
+
+    // OTA error callback - re-accept TCP connections if OTA fails
+    network.onOTAError([]() {
+        LOGI(TAG, "OTA failed - accepting TCP connections again");
+        tcp_server.accept_connections();
+    });
 
     // OTA progress callback
     network.onOTAProgress([](unsigned int progress, unsigned int total) {
@@ -319,11 +362,11 @@ void setupRS485() {
     logger.printSeparator("RS485 Communication");
     LOGI(TAG, "Initializing RS485...");
 
-    // Initialize RS485 on Serial2
+    // Initialize RS485
     rs485.begin(Serial2, RS485_TX_PIN, RS485_RX_PIN, RS485_DE_PIN, RS485_BAUD_RATE);
 
-    // Read inverter serial from registers 115-119 to validate RS485 link
-    rs485.probe_inverter_serial();
+    // Read inverter serial to validate RS485 link
+    // rs485.probe_inverter_serial();
 
     LOGI(TAG, "✓ RS485 initialized");
     Serial.println();

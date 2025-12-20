@@ -32,9 +32,16 @@ void ProtocolBridge::loop() {
     if (waiting_rs485_response_) {
         process_rs485_response();
 
+        const uint32_t timeout_ms = REQUEST_TIMEOUT_MS;
+
         // Check timeout
-        if (millis() - last_request_time_ > REQUEST_TIMEOUT_MS) {
-            LOGW(TAG, "Request timeout");
+        if (millis() - last_request_time_ > timeout_ms) {
+            // Don't log as error if it's a network issue
+            if (WiFi.status() != WL_CONNECTED) {
+                LOGW(TAG, "Request timeout during WiFi disconnection (%lu ms)", timeout_ms);
+            } else {
+                LOGW(TAG, "Request timeout (%lu ms)", timeout_ms);
+            }
             send_error_response(current_request_.client, "Request timeout");
             waiting_rs485_response_ = false;
             failed_requests_++;

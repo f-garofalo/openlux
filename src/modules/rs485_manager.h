@@ -147,6 +147,7 @@ class RS485Manager {
     uint32_t get_successful_responses() const { return successful_responses_; }
     uint32_t get_failed_responses() const { return failed_responses_; }
     uint32_t get_timeout_count() const { return timeout_count_; }
+    uint32_t get_ignored_packets() const { return ignored_packets_; }
 
   private:
     RS485Manager() = default;
@@ -160,6 +161,9 @@ class RS485Manager {
     void handle_response(const std::vector<uint8_t>& data);
     void handle_timeout();
     bool should_ignore_packet(const std::vector<uint8_t>& data);
+
+    // Helper function to convert function code to string
+    static const char* function_code_to_string(LuxFunctionCode func);
 
     HardwareSerial* serial_ = nullptr;
     int8_t de_pin_ = -1; // DE/RE pin for RS485 transceiver (-1 if not used)
@@ -189,4 +193,5 @@ class RS485Manager {
     uint32_t successful_responses_ = 0;
     uint32_t failed_responses_ = 0;
     uint32_t timeout_count_ = 0;
+    uint32_t ignored_packets_ = 0;
 };
