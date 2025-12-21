@@ -119,11 +119,13 @@ void CommandManager::registerCoreCommands() {
                         if (!OPENLUX_USE_ETHERNET) {
                             msg += " (";
                             msg += net.getSSID();
+                            msg += ", Channel ";
+                            msg += String(net.getChannel());
                             msg += ", RSSI ";
                             msg += net.getRSSI();
                             msg += " dBm, TX ";
 
-                            const auto pwr = WiFi.getTxPower();
+                            const auto pwr = net.getTxPower();
                             switch (pwr) {
                                 case 78:
                                     msg += "19.5";
@@ -304,7 +306,12 @@ void CommandManager::registerCoreCommands() {
     // wifi_scan: list nearby networks (SSID/RSSI)
     registerCommand("wifi_scan", "Scan WiFi networks (SSID/RSSI)",
                     [](const std::vector<String>&) -> CommandResult {
-                        int n = WiFi.scanNetworks();
+                        auto& bridge = ProtocolBridge::getInstance();
+                        bridge.onScanStateChanged(true, "Manual scan");
+
+                        const int n = WiFi.scanNetworks(false, false, false, 200);
+
+                        bridge.onScanStateChanged(false, "Manual scan done");
                         if (n == WIFI_SCAN_FAILED) {
                             return CommandResult{false, "Scan failed"};
                         }
@@ -312,7 +319,7 @@ void CommandManager::registerCoreCommands() {
                             return CommandResult{true, "No networks found"};
                         }
                         String out;
-                        const int networks = min(n, 10); // Limit to 10
+                        const int networks = min(n, 15); // Limit to 15
                         out.reserve(networks * 80 + 50); // ~80 char/network + header
                         auto sig_icon = [](int rssi) -> const char* {
                             if (rssi >= -50)
@@ -334,6 +341,8 @@ void CommandManager::registerCoreCommands() {
                             out += " (";
                             out += WiFi.RSSI(i);
                             out += " dBm)";
+                            out += " Ch ";
+                            out += WiFi.channel(i);
                             if (WiFi.encryptionType(i) != WIFI_AUTH_OPEN) {
                                 out += " [sec]";
                             }

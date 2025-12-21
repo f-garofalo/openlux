@@ -109,6 +109,10 @@ WebServerManager::WebServerManager() : server_(WEB_DASH_PORT) {}
 void WebServerManager::begin() {
     LOGI(TAG, "Starting web dashboard on port %d", WEB_DASH_PORT);
     registerRoutes();
+    server_.onNotFound([this]() {
+        LOGW("web", "Unhandled request: %s", server_.uri().c_str());
+        server_.send(404, "text/plain", "Not Found");
+    });
     server_.begin();
 }
 

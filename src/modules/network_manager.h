@@ -62,11 +62,15 @@ class NetworkManager {
     String getSSID() const { return String("ETH"); }
     int getRSSI() const { return 0; }
     String getMAC() const { return ETH.macAddress(); }
+    int8_t getTxPower() const { return 0; }
+    uint32_t getChannel() const { return 0; }
 #else
     IPAddress getIP() const { return WiFi.localIP(); }
     String getSSID() const { return WiFi.SSID(); }
     int getRSSI() const { return WiFi.RSSI(); }
     String getMAC() const { return WiFi.macAddress(); }
+    int8_t getTxPower() const { return WiFi.getTxPower(); }
+    uint32_t getChannel() const { return WiFi.channel(); }
 #endif
 
     // OTA configuration
@@ -158,4 +162,9 @@ class NetworkManager {
     static constexpr uint32_t CONNECT_RETRY_DELAY = 5000;          // 5 seconds
     static constexpr uint32_t STATUS_LOG_INTERVAL = 30000;         // 30 seconds
     static constexpr uint32_t VALIDATION_INTERVAL_MS = 120 * 1000; // 120 seconds
+
+    void logHeapStatus(const char* context);
+#if !OPENLUX_USE_ETHERNET
+    void handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info);
+#endif
 };

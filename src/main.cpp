@@ -29,15 +29,17 @@
 #include "modules/rs485_manager.h"
 #include "modules/system_manager.h"
 #include "modules/tcp_server.h"
+
+#include <Esp.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #ifdef ENABLE_WEB_DASH
 #include "modules/web_server.h"
 #endif
 #ifdef ENABLE_MQTT
 #include "modules/mqtt_manager.h"
 #endif
-
 #include <Arduino.h>
-#include <Esp.h>
 
 // Logging tag
 static const char* TAG = "main";
@@ -151,7 +153,7 @@ void loop() {
 
     // Feed watchdog and add small delay
     yield(); // Feed watchdog timer
-    delay(10);
+    vTaskDelay(pdMS_TO_TICKS(10));
 }
 
 /**
@@ -252,6 +254,7 @@ void setupWiFi() {
 
         Serial.println();
 
+        vTaskDelay(pdMS_TO_TICKS(10));
         // Now we can accept TCP connections
         LOGI(TAG, "Enabling TCP connection acceptance...");
         tcp_server.accept_connections();

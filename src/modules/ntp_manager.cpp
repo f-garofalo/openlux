@@ -9,6 +9,9 @@
 
 #include "logger.h"
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 static const char* TAG = "ntp";
 
 NTPManager& NTPManager::getInstance() {
@@ -78,7 +81,7 @@ bool NTPManager::waitForSync(uint32_t timeout_ms) {
         if (now > 1000000000) { // Valid timestamp (after year 2001)
             return true;
         }
-        delay(100);
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     return false;

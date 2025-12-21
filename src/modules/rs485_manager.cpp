@@ -521,18 +521,18 @@ void RS485Manager::loop() {
         return;
     }
 
+    // Auto-probe with backoff when link is down
+    if (!inverter_link_ok_ && !serial_probe_pending_ && !waiting_response_ &&
+        millis() >= next_serial_probe_ms_) {
+        request_inverter_serial_probe();
+    }
+
     // Process incoming data
     process_incoming_data();
 
     // Check for timeout
     if (waiting_response_ && (millis() - last_tx_time_) > response_timeout_ms_) {
         handle_timeout();
-    }
-
-    // Auto-probe with backoff when link is down
-    if (!inverter_link_ok_ && !serial_probe_pending_ && !waiting_response_ &&
-        millis() >= next_serial_probe_ms_) {
-        request_inverter_serial_probe();
     }
 }
 

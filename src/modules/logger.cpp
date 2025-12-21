@@ -12,7 +12,11 @@
 #include "command_manager.h"
 #include "ntp_manager.h"
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 #include <cstdarg>
+#include <cstring>
 
 
 Logger::Logger() : mutex_(xSemaphoreCreateRecursiveMutex()), buffer_{} {}
@@ -32,16 +36,13 @@ Logger::~Logger() {
 }
 
 void Logger::begin(uint32_t baud_rate) {
-    // Apply default log level from config
-    level_ = static_cast<LogLevel>(OPENLUX_LOG_LEVEL);
-
-
+    applyCompileTimeOverrides();
     Serial.begin(baud_rate);
 
     // Wait for serial (max 3 seconds)
     uint32_t start = millis();
     while (!Serial && (millis() - start < 3000)) {
-        delay(10);
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
     Serial.println();
@@ -58,8 +59,9 @@ void Logger::loop() {
     }
 }
 
+#if OPENLUX_ENABLE_LOGGING
 void Logger::debug(const char* tag, const char* format, ...) {
-    if (level_ > LogLevel::DEBUG)
+    if (!shouldLog(LogLevel::DEBUG, tag))
         return;
     va_list args;
     va_start(args, format);
@@ -68,7 +70,7 @@ void Logger::debug(const char* tag, const char* format, ...) {
 }
 
 void Logger::info(const char* tag, const char* format, ...) {
-    if (level_ > LogLevel::INFO)
+    if (!shouldLog(LogLevel::INFO, tag))
         return;
     va_list args;
     va_start(args, format);
@@ -77,16 +79,17 @@ void Logger::info(const char* tag, const char* format, ...) {
 }
 
 void Logger::warning(const char* tag, const char* format, ...) {
-    if (level_ > LogLevel::WARN)
+    if (!shouldLog(LogLevel::WARN, tag))
         return;
     va_list args;
     va_start(args, format);
     log("W", COLOR_WARN, tag, format, args);
     va_end(args);
 }
+#endif
 
 void Logger::error(const char* tag, const char* format, ...) {
-    if (level_ > LogLevel::ERROR)
+    if (!shouldLog(LogLevel::ERROR, tag))
         return;
     va_list args;
     va_start(args, format);
@@ -280,4 +283,75 @@ void Logger::printSeparator(const char* title, const char* color) {
 void Logger::printHeader(const char* title) {
     Serial.println();
     Serial.printf("-- %s\n", title);
+}
+
+void Logger::setGlobalLevel(LogLevel level) {
+    global_level_ = level;
+}
+
+LogLevel Logger::getGlobalLevel() const {
+    return global_level_;
+}
+
+void Logger::setModuleLevel(const char* tag, LogLevel level) {
+    if (!tag)
+        return;
+    for (size_t i = 0; i < module_level_count_; ++i) {
+        if (strcmp(module_levels_[i].tag, tag) == 0) {
+            module_levels_[i].level = level;
+            return;
+        }
+    }
+    if (module_level_count_ < MAX_MODULE_OVERRIDES) {
+        module_levels_[module_level_count_++] = {tag, level};
+    }
+}
+
+LogLevel Logger::getModuleLevel(const char* tag) const {
+    if (!tag)
+        return global_level_;
+    for (size_t i = 0; i < module_level_count_; ++i) {
+        if (strcmp(module_levels_[i].tag, tag) == 0) {
+            return module_levels_[i].level;
+        }
+    }
+    return global_level_;
+}
+
+void Logger::clearModuleLevel(const char* tag) {
+    if (!tag)
+        return;
+    for (size_t i = 0; i < module_level_count_; ++i) {
+        if (strcmp(module_levels_[i].tag, tag) == 0) {
+            for (size_t j = i; j + 1 < module_level_count_; ++j) {
+                module_levels_[j] = module_levels_[j + 1];
+            }
+            --module_level_count_;
+            return;
+        }
+    }
+}
+
+LogLevel Logger::getEffectiveLevel(const char* tag) const {
+    return getModuleLevel(tag);
+}
+
+bool Logger::shouldLog(LogLevel message_level, const char* tag) const {
+    const LogLevel effective = getEffectiveLevel(tag);
+    return static_cast<int>(message_level) >= static_cast<int>(effective);
+}
+
+LogLevel Logger::clampLevel(int raw_level) {
+    if (raw_level < static_cast<int>(LogLevel::DEBUG))
+        return LogLevel::DEBUG;
+    if (raw_level > static_cast<int>(LogLevel::NONE))
+        return LogLevel::NONE;
+    return static_cast<LogLevel>(raw_level);
+}
+
+void Logger::applyCompileTimeOverrides() {
+    global_level_ = clampLevel(OPENLUX_LOG_LEVEL);
+#define OPENLUX_MODULE_LOG_LEVEL(name, value) setModuleLevel(#name, clampLevel(value));
+#include "../modules/logger_levels.inc"
+#undef OPENLUX_MODULE_LOG_LEVEL
 }

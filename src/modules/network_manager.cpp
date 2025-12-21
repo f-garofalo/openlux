@@ -9,9 +9,13 @@
 
 #include "../config.h"
 #include "logger.h"
+#include "protocol_bridge.h"
 #include "system_manager.h"
 
 #include <Esp.h>
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 static const char* TAG = "net";
 
@@ -121,6 +125,8 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
 
 #if !OPENLUX_USE_ETHERNET
     LOGI(TAG, "  SSID: %s", ssid_);
+
+    WiFi.onEvent([this](WiFiEvent_t event, WiFiEventInfo_t info) { handleWiFiEvent(event, info); });
 
     // Set hostname early
     if (hostname_) {
@@ -294,7 +300,7 @@ void NetworkManager::setupMDNS(const char* hostname) {
 void NetworkManager::softReconnect() {
     LOGI(TAG, "WiFi soft reconnect");
     WiFi.disconnect(false);
-    delay(200);
+    vTaskDelay(pdMS_TO_TICKS(200));
     WiFi.reconnect(); // uses stored credentials
 }
 
@@ -302,7 +308,7 @@ void NetworkManager::restartInterface() {
     LOGI(TAG, "WiFi interface restart (STA)");
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
-    delay(200);
+    vTaskDelay(pdMS_TO_TICKS(200));
     WiFi.mode(WIFI_STA);
     WiFi.begin(); // uses stored credentials
 }
@@ -421,6 +427,7 @@ void NetworkManager::connectWiFi(bool force_scan) {
 #if OPENLUX_USE_ETHERNET
     return;
 #else
+    logHeapStatus(force_scan ? "connect_force" : "connect_auto");
     bool should_scan = true;
 #if defined(WIFI_FAST_CONNECT) && (WIFI_FAST_CONNECT == 1)
     should_scan = false;
@@ -437,6 +444,7 @@ void NetworkManager::connectWiFi(bool force_scan) {
 
         int bestRSSI;
         int bestNetworkIndex = scanAndFindBestAP(bestRSSI);
+        logHeapStatus("scan_complete");
 
         if (bestNetworkIndex >= 0) {
             uint8_t* bssid = WiFi.BSSID(bestNetworkIndex);
@@ -452,7 +460,8 @@ void NetworkManager::connectWiFi(bool force_scan) {
             WiFi.begin(ssid_, password_);
         }
 
-        WiFi.scanDelete(); // Clean up scan results from memory
+        WiFi.scanDelete();
+        logHeapStatus("scan_delete");
         last_connect_attempt_ = millis();
     }
 #endif
@@ -609,6 +618,7 @@ void NetworkManager::checkConnection() {
 #if !OPENLUX_USE_ETHERNET
     if (!connected && (millis() - last_connect_attempt_ > CONNECT_RETRY_DELAY)) {
         LOGW(TAG, "Attempting to reconnect...");
+        logHeapStatus("reconnect_request");
         connectWiFi();
     }
 
@@ -624,11 +634,14 @@ void NetworkManager::checkConnection() {
     // Periodic scan for better AP
     const uint32_t now_scan = millis();
     if (connected && (now_scan - last_scan_ms_ > WIFI_PERIODIC_SCAN_INTERVAL_MS)) {
-        LOGI(TAG, "Periodic WiFi scan: checking for better AP...");
+        LOGW(TAG, "Periodic WiFi scan: checking for better AP...");
+        logHeapStatus("scan_begin");
         last_scan_ms_ = now_scan;
+        bridge.onScanStateChanged(true, "Periodic scan");
 
         int bestRSSI;
         int bestNetworkIndex = scanAndFindBestAP(bestRSSI);
+        logHeapStatus("scan_post");
 
         if (bestNetworkIndex >= 0) {
             int currentRSSI = WiFi.RSSI();
@@ -639,9 +652,9 @@ void NetworkManager::checkConnection() {
                 String newBSSID = WiFi.BSSIDstr(bestNetworkIndex);
                 // Only roam if BSSID is different
                 if (!newBSSID.equalsIgnoreCase(currentBSSID)) {
-                    LOGI(TAG, "Found better AP! Current: %d dBm, New: %d dBm", currentRSSI,
+                    LOGW(TAG, "Found better AP! Current: %d dBm, New: %d dBm", currentRSSI,
                          bestRSSI);
-                    LOGI(TAG, "Roaming from %s to %s", currentBSSID.c_str(), newBSSID.c_str());
+                    LOGW(TAG, "Roaming from %s to %s", currentBSSID.c_str(), newBSSID.c_str());
 
                     uint8_t* bssid = WiFi.BSSID(bestNetworkIndex);
                     int32_t channel = WiFi.channel(bestNetworkIndex);
@@ -654,16 +667,18 @@ void NetworkManager::checkConnection() {
                     // Reset connection state to trigger on_connected callback again eventually
                     was_connected_ = false;
                 } else {
-                    LOGD(TAG, "Already connected to best AP");
+                    LOGW(TAG, "Already connected to best AP");
                 }
             } else {
-                LOGD(TAG, "Current AP is good enough (Current: %d, Best: %d)", currentRSSI,
+                LOGW(TAG, "Current AP is good enough (Current: %d, Best: %d)", currentRSSI,
                      bestRSSI);
             }
         } else {
             LOGW(TAG, "Periodic scan failed or no networks found");
         }
         WiFi.scanDelete();
+        logHeapStatus("scan_delete_periodic");
+        bridge.onScanStateChanged(false, "Periodic scan done");
     }
 #endif
 #else
@@ -718,4 +733,34 @@ void NetworkManager::checkConnection() {
 
 void NetworkManager::handleOTA() {
     ArduinoOTA.handle();
+}
+
+#if !OPENLUX_USE_ETHERNET
+void NetworkManager::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+    switch (event) {
+        case ARDUINO_EVENT_WIFI_SCAN_DONE:
+            logHeapStatus("scan_done");
+            break;
+        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+            logHeapStatus("sta_disconnected");
+            LOGW(TAG, "WiFi disconnect reason=%d", info.wifi_sta_disconnected.reason);
+            gateway_reachable_ = false;
+            break;
+        case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+            logHeapStatus("sta_connected");
+            break;
+        default:
+            break;
+    }
+}
+#endif
+
+void NetworkManager::logHeapStatus(const char* context) {
+    auto& sys = SystemManager::getInstance();
+    const uint32_t free_heap = sys.getFreeHeap();
+    const uint32_t min_heap = sys.getMinFreeHeap();
+    const uint32_t max_alloc = sys.getMaxAllocHeap();
+    const bool ok = heap_caps_check_integrity_all(true);
+    LOGE(TAG, "heap(%s): free=%u min=%u max_alloc=%u integrity=%s", context, free_heap, min_heap,
+         max_alloc, ok ? "OK" : "FAIL");
 }

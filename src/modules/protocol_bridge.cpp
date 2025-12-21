@@ -8,6 +8,10 @@
 #include "protocol_bridge.h"
 
 #include "logger.h"
+#include "network_manager.h"
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 static const char* TAG = "bridge";
 
@@ -49,9 +53,50 @@ void ProtocolBridge::loop() {
     }
 }
 
+void ProtocolBridge::onScanStateChanged(bool active, const char* reason) {
+    if (active) {
+        if (paused_) {
+            return;
+        }
+        paused_ = true;
+        pause_reason_ = reason ? reason : "Scan";
+        LOGW(TAG, "Pausing bridge (reason: %s)", pause_reason_.c_str());
+
+        const uint32_t start = millis();
+        const uint32_t wait_ms = 1000;
+        while (waiting_rs485_response_ && millis() - start < wait_ms) {
+            rs485_->loop();
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+        if (waiting_rs485_response_) {
+            LOGW(TAG, "RS485 still busy after %lums", millis() - start);
+        }
+        if (tcp_server_) {
+            tcp_server_->reject_connections();
+        }
+    } else {
+        if (!paused_) {
+            return;
+        }
+        paused_ = false;
+        LOGW(TAG, "Resuming bridge (previous pause: %s)", pause_reason_.c_str());
+        pause_reason_.clear();
+        if (tcp_server_) {
+            tcp_server_->accept_connections();
+        }
+    }
+}
+
 void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TCPClient* client) {
     if (!is_ready()) {
         LOGW(TAG, "Bridge not ready (tcp_server=%p, rs485=%p)", tcp_server_, rs485_);
+        return;
+    }
+
+    if (paused_) {
+        LOGW(TAG, "Bridge paused (%s), rejecting TCP request", pause_reason_.c_str());
+        send_error_response(client, "Bridge paused");
+        failed_requests_++;
         return;
     }
 

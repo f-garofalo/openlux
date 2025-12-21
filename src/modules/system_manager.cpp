@@ -11,6 +11,8 @@
 
 #include <Esp.h>
 #include <esp_task_wdt.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 static const char* TAG = "sys";
 static const int WDT_TIMEOUT = 30; // 30 seconds watchdog
@@ -90,7 +92,7 @@ void SystemManager::reboot(const char* reason) {
     prefs_.end();
 
     // Ensure logs are flushed
-    delay(100);
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     ESP.restart();
 }

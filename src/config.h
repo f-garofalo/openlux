@@ -123,7 +123,7 @@
  * and reconnect if a stronger AP is found.
  * Useful in mesh networks where the device might stick to a distant AP.
  */
-#define WIFI_PERIODIC_SCAN_ENABLED 1                    ///< Set to 1 to enable periodic scanning
+#define WIFI_PERIODIC_SCAN_ENABLED 0                    ///< Set to 1 to enable periodic scanning
 #define WIFI_PERIODIC_SCAN_INTERVAL_MS (40 * 60 * 1000) ///< Scan interval in ms
 #define WIFI_RSSI_THRESHOLD_DBM 5 ///< Minimum RSSI improvement to trigger reconnect
 
@@ -238,8 +238,28 @@
  * @brief Log level (0=DEBUG, 1=INFO, 2=WARN, 3=ERROR, 4=NONE)
  *
  * Controls which log lines are emitted. Lower = more verbose.
+ * Set OPENLUX_LOG_LEVEL only once; module-specific overrides (optional) go below.
  */
-#define OPENLUX_LOG_LEVEL 1
+#define OPENLUX_LOG_LEVEL 2
+
+/**
+ * @brief Optional per-module log level overrides (same scale as above)
+ *
+ * Uncomment and adjust the modules you want to override. Any module left
+ * undefined inherits OPENLUX_LOG_LEVEL.
+ * Example: force RS485 to DEBUG while keeping global INFO level.
+ *   #define OPENLUX_LOG_LEVEL_RS485 0
+ */
+#define OPENLUX_LOG_LEVEL_MAIN 1
+#define OPENLUX_LOG_LEVEL_RS485 2
+#define OPENLUX_LOG_LEVEL_NETWORK 0
+#define OPENLUX_LOG_LEVEL_MQTT 1
+#define OPENLUX_LOG_LEVEL_BRIDGE 2
+#define OPENLUX_LOG_LEVEL_TCP 2
+#define OPENLUX_LOG_LEVEL_SYSTEM 1
+#define OPENLUX_LOG_LEVEL_COMMAND 1
+#define OPENLUX_LOG_LEVEL_NTP 1
+#define OPENLUX_LOG_LEVEL_WEB 1
 
 /**
  * @brief Performance Tuning
