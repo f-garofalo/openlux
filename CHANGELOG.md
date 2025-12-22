@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - Placeholder for future changes.
 
+## [1.0.5] - 2025-12-24
+### Added
+- Implement operation guard for managing concurrent operations; refactor WiFi scanning and network validation
+
 ## [1.0.4] - 2025-12-22
 ### Added
 - **MQTT Support**: Full MQTT integration for telemetry publishing and remote command execution with configurable broker, topics, and Home Assistant discovery prefix.
