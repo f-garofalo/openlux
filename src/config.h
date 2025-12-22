@@ -123,9 +123,9 @@
  * and reconnect if a stronger AP is found.
  * Useful in mesh networks where the device might stick to a distant AP.
  */
-#define WIFI_PERIODIC_SCAN_ENABLED 0                    ///< Set to 1 to enable periodic scanning
-#define WIFI_PERIODIC_SCAN_INTERVAL_MS (40 * 60 * 1000) ///< Scan interval in ms
-#define WIFI_RSSI_THRESHOLD_DBM 5 ///< Minimum RSSI improvement to trigger reconnect
+#define WIFI_ROAMING_ENABLED 0
+#define WIFI_ROAMING_INTERVAL_MS (2400 * 1000)
+#define WIFI_ROAMING_RSSI_THRESHOLD_DBM -75
 
 /**
  * @brief Fast WiFi Connection

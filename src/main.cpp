@@ -99,19 +99,19 @@ void setup() {
     // Setup Wi-Fi (with callbacks for network services)
     setupWiFi();
 
-#ifdef ENABLE_WEB_DASH
-    setupWebServer();
-#endif
-
 #ifdef ENABLE_MQTT
     MqttManager::getInstance().begin();
 #endif
 
-    // Enable System Watchdog
-    sys.enableWatchdog();
+#ifdef ENABLE_WEB_DASH
+    setupWebServer();
+#endif
 
     // Print system information
     printSystemInfo();
+
+    // Enable System Watchdog
+    sys.enableWatchdog();
 
     LOGI(TAG, "Setup completed - entering main loop...");
 }
@@ -366,7 +366,7 @@ void setupRS485() {
     LOGI(TAG, "Initializing RS485...");
 
     // Initialize RS485
-    rs485.begin(Serial2, RS485_TX_PIN, RS485_RX_PIN, RS485_DE_PIN, RS485_BAUD_RATE);
+    rs485.begin(Serial1, RS485_TX_PIN, RS485_RX_PIN, RS485_DE_PIN, RS485_BAUD_RATE);
 
     // Read inverter serial to validate RS485 link
     // rs485.probe_inverter_serial();

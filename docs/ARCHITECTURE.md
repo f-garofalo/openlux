@@ -225,7 +225,6 @@ All user-configurable settings are in `src/config.h`:
 **Logging & Monitoring:**
 - `OPENLUX_LOG_LEVEL` - 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR, 4=NONE
 - `TELNET_PORT` - Remote logging port (default: 23)
-- `STATUS_LOG_INTERVAL_MS` - Periodic status logging interval
 
 **Time Synchronization:**
 - `NTP_SERVER_1/2/3` - Configurable NTP servers

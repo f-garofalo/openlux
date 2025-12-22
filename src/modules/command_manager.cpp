@@ -306,12 +306,14 @@ void CommandManager::registerCoreCommands() {
     // wifi_scan: list nearby networks (SSID/RSSI)
     registerCommand("wifi_scan", "Scan WiFi networks (SSID/RSSI)",
                     [](const std::vector<String>&) -> CommandResult {
-                        auto& bridge = ProtocolBridge::getInstance();
-                        bridge.onScanStateChanged(true, "Manual scan");
+                        auto& net = NetworkManager::getInstance();
+                        auto guard = net.acquireScanGuard("manual_scan");
+                        if (!guard) {
+                            return CommandResult{false, "Scan already running"};
+                        }
 
                         const int n = WiFi.scanNetworks(false, false, false, 200);
 
-                        bridge.onScanStateChanged(false, "Manual scan done");
                         if (n == WIFI_SCAN_FAILED) {
                             return CommandResult{false, "Scan failed"};
                         }

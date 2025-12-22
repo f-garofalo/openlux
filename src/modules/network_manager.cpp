@@ -33,7 +33,9 @@ void NetworkManager::taskTrampoline(void* arg) {
 }
 
 void NetworkManager::runTask() {
-    checkConnection();
+    if (!ota_in_progress_) {
+        checkConnection();
+    }
 
     if (ota_enabled_ && !ota_in_progress_) {
         handleOTA();
@@ -64,8 +66,6 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
     }
     prefs_.end();
 
-    use_ethernet_ = (OPENLUX_USE_ETHERNET != 0);
-
     ssid_ = ssid;
     password_ = password;
     hostname_ = hostname;
@@ -75,52 +75,22 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
     LOGI(TAG, "  NET mode: %s", use_ethernet_ ? "ETH" : "WIFI");
 
 #if OPENLUX_USE_ETHERNET
-    if (use_ethernet_) {
-        ETH.onEvent(
-            [this](WiFiEvent_t event, WiFiEventInfo_t info) {
-                switch (event) {
-                    case ARDUINO_EVENT_ETH_START:
-                        ETH.setHostname(hostname_ ? hostname_ : WIFI_HOSTNAME);
-                        LOGI(TAG, "ETH start");
-                        break;
-                    case ARDUINO_EVENT_ETH_CONNECTED:
-                        LOGI(TAG, "ETH link up");
-                        break;
-                    case ARDUINO_EVENT_ETH_GOT_IP:
-                        eth_connected_ = true;
-                        LOGI(TAG, "ETH got IP: %s", ETH.localIP().toString().c_str());
-                        LOGI(TAG, "  Gateway: %s", ETH.gatewayIP().toString().c_str());
-                        LOGI(TAG, "  DNS: %s", ETH.dnsIP().toString().c_str());
-                        LOGI(TAG, "  MAC: %s", ETH.macAddress().c_str());
-                        markBootSuccessful();
-                        if (on_connected_)
-                            on_connected_();
-                        break;
-                    case ARDUINO_EVENT_ETH_DISCONNECTED:
-                    case ARDUINO_EVENT_ETH_STOP:
-                        if (eth_connected_ && on_disconnected_)
-                            on_disconnected_();
-                        eth_connected_ = false;
-                        LOGW(TAG, "ETH disconnected");
-                        break;
-                    default:
-                        break;
-                }
-            },
-            ARDUINO_EVENT_MAX);
+    WiFi.onEvent(
+        [this](WiFiEvent_t event, WiFiEventInfo_t info) { handleEthernetEvent(event, info); },
+        ARDUINO_EVENT_MAX);
 
-        if (!ETH.begin(ETH_PHY_ADDR, ETH_PHY_POWER_PIN, ETH_PHY_MDC_PIN, ETH_PHY_MDIO_PIN,
-                       ETH_PHY_TYPE, ETH_PHY_CLK_MODE)) {
-            LOGE(TAG, "ETH begin failed");
-        } else {
-            LOGI(TAG, "ETH init requested");
-        }
-        BaseType_t core = NETWORK_TASK_CORE;
-        if (core < 0)
-            core = tskNO_AFFINITY;
-        xTaskCreatePinnedToCore(taskTrampoline, "NetMgrTask", 4096, this, 1, NULL, core);
-        return;
+    if (!ETH.begin(ETH_PHY_ADDR, ETH_PHY_POWER_PIN, ETH_PHY_MDC_PIN, ETH_PHY_MDIO_PIN, ETH_PHY_TYPE,
+                   ETH_PHY_CLK_MODE)) {
+        LOGE(TAG, "ETH begin failed");
+    } else {
+        LOGI(TAG, "ETH init requested");
     }
+    BaseType_t core = NETWORK_TASK_CORE;
+    if (core < 0)
+        core = tskNO_AFFINITY;
+    xTaskCreatePinnedToCore(taskTrampoline, "NetMgrTask", 4096, this, 1, NULL, core);
+    return;
+
 #endif
 
 #if !OPENLUX_USE_ETHERNET
@@ -298,6 +268,10 @@ void NetworkManager::setupMDNS(const char* hostname) {
 
 #if !OPENLUX_USE_ETHERNET
 void NetworkManager::softReconnect() {
+    if (isScanning()) {
+        LOGW(TAG, "softReconnect ignored: scan in progress");
+        return;
+    }
     LOGI(TAG, "WiFi soft reconnect");
     WiFi.disconnect(false);
     vTaskDelay(pdMS_TO_TICKS(200));
@@ -390,7 +364,47 @@ bool NetworkManager::startProvisioningPortal() {
 }
 #endif
 
+NetworkManager::ScanGuard NetworkManager::acquireScanGuard(const char* reason) {
+    return ScanGuard(this, beginScan(reason), reason);
+}
+
+bool NetworkManager::beginScan(const char* reason) {
+    if (scanning_in_progress_) {
+        LOGW(TAG, "Scan already in progress (owner=%s)", scan_owner_ ? scan_owner_ : "?");
+        return false;
+    }
+    scanning_in_progress_ = true;
+    scan_owner_ = reason;
+    LOGD(TAG, "WiFi scan guard acquired (%s)", reason ? reason : "unknown");
+
+    auto& bridge = ProtocolBridge::getInstance();
+    bridge.onScanStateChanged(true, reason ? reason : "Wi-Fi scan");
+
+    return true;
+}
+
+void NetworkManager::endScan() {
+    if (!scanning_in_progress_)
+        return;
+    LOGD(TAG, "WiFi scan guard released (%s)", scan_owner_ ? scan_owner_ : "unknown");
+    scanning_in_progress_ = false;
+    scan_owner_ = nullptr;
+}
+
+void NetworkManager::ScanGuard::release() {
+    if (owner_ && active_) {
+        auto& bridge = ProtocolBridge::getInstance();
+        String msg = reason_ ? String(reason_) + " complete" : "Scan complete";
+        bridge.onScanStateChanged(false, msg.c_str());
+
+        owner_->endScan();
+        active_ = false;
+    }
+}
+
 int NetworkManager::scanAndFindBestAP(int& bestRSSI) {
+    // NOTE: Assumes ScanGuard is already held by caller
+
     // Scan for networks (synchronous scan)
     int n = WiFi.scanNetworks();
     int bestNetworkIndex = -1;
@@ -414,7 +428,14 @@ int NetworkManager::scanAndFindBestAP(int& bestRSSI) {
                 }
             }
         }
+
+        if (bestNetworkIndex == -1) {
+            LOGW(TAG, "Preferred AP not found in scan results");
+        } else {
+            LOGI(TAG, "Best AP found: %s, RSSI: %d", WiFi.SSID(bestNetworkIndex).c_str(), bestRSSI);
+        }
     }
+
     return bestNetworkIndex;
 }
 
@@ -427,7 +448,12 @@ void NetworkManager::connectWiFi(bool force_scan) {
 #if OPENLUX_USE_ETHERNET
     return;
 #else
-    logHeapStatus(force_scan ? "connect_force" : "connect_auto");
+    auto guard = acquireScanGuard("connectWiFi");
+    if (!guard) {
+        LOGW(TAG, "Cannot scan: another scan is in progress");
+        return;
+    }
+
     bool should_scan = true;
 #if defined(WIFI_FAST_CONNECT) && (WIFI_FAST_CONNECT == 1)
     should_scan = false;
@@ -444,7 +470,6 @@ void NetworkManager::connectWiFi(bool force_scan) {
 
         int bestRSSI;
         int bestNetworkIndex = scanAndFindBestAP(bestRSSI);
-        logHeapStatus("scan_complete");
 
         if (bestNetworkIndex >= 0) {
             uint8_t* bssid = WiFi.BSSID(bestNetworkIndex);
@@ -461,7 +486,7 @@ void NetworkManager::connectWiFi(bool force_scan) {
         }
 
         WiFi.scanDelete();
-        logHeapStatus("scan_delete");
+        ;
         last_connect_attempt_ = millis();
     }
 #endif
@@ -480,26 +505,24 @@ bool NetworkManager::validateConnection() {
 
     if (gateway == IPAddress(0, 0, 0, 0)) {
         LOGW(TAG, "Gateway IP is 0.0.0.0");
-        return true; // Assume reachable
+        return true;
     }
 
     {
         WiFiClient client;
         client.setNoDelay(true);
         client.setTimeout(300);
-
         if (client.connect(gateway, 53, 300)) {
             client.stop();
             return true;
         }
-    } // client destructor called here - clean close
+    }
 
 #if defined(MQTT_HOST)
     {
         WiFiClient client;
         client.setNoDelay(true);
         client.setTimeout(150);
-
         if (client.connect(MQTT_HOST, MQTT_PORT, 150)) {
             client.stop();
             LOGD(TAG, "Connection validated via MQTT broker");
@@ -507,29 +530,28 @@ bool NetworkManager::validateConnection() {
         }
         LOGW(TAG, "Failed to connect to gateway %s (port 53) and MQTT %s:%d",
              gateway.toString().c_str(), MQTT_HOST, MQTT_PORT);
-
-    } // client destructor called here - clean close
-
+    }
 #else
     {
         WiFiClient client;
         client.setNoDelay(true);
         client.setTimeout(150);
-
         if (client.connect(gateway, 80, 150)) {
             client.stop();
             return true;
         }
         LOGW(TAG, "Failed to connect to gateway %s (ports 53, 80)", gateway.toString().c_str());
-    } // client destructor called here - clean close
-
-
+    }
 #endif
 
     return false;
 }
 
 bool NetworkManager::isConnected() {
+    if (isScanning()) {
+        return was_connected_;
+    }
+
     bool link_up = false;
 #if OPENLUX_USE_ETHERNET
     link_up = eth_connected_ && ETH.linkUp();
@@ -545,26 +567,19 @@ bool NetworkManager::isConnected() {
         return false;
     }
 
-    // Link is up. Perform periodic active validation.
     const uint32_t now = millis();
-
-    // Adaptive validation interval: check less frequently during problems to reduce blocking
-    uint32_t validation_interval = VALIDATION_INTERVAL_MS; // Default 60s
+    uint32_t validation_interval = VALIDATION_INTERVAL_MS;
     if (!gateway_reachable_) {
-        validation_interval = VALIDATION_INTERVAL_MS * 3; // 180s when gateway is unreachable
+        validation_interval = VALIDATION_INTERVAL_MS * 3;
     }
 
     if (now - last_validation_ms_ > validation_interval) {
         last_validation_ms_ = now;
         const bool reachable = validateConnection();
-
         if (reachable != gateway_reachable_) {
             if (!reachable) {
                 LOGW(TAG, "Active connection check failed! Gateway unreachable.");
                 auto& sys = SystemManager::getInstance();
-                LOGW(TAG, "  Heap free=%u bytes, min=%u bytes, max_alloc=%u bytes, uptime=%lus",
-                     sys.getFreeHeap(), sys.getMinFreeHeap(), sys.getMaxAllocHeap(),
-                     sys.getUptime());
             } else {
                 LOGI(TAG, "Active connection check passed (recovered).");
             }
@@ -578,6 +593,10 @@ bool NetworkManager::isConnected() {
 }
 
 void NetworkManager::checkConnection() {
+    if (isScanning()) {
+        return;
+    }
+
     bool connected = isConnected();
     bool has_credentials = (ssid_ && strlen(ssid_) > 0);
 
@@ -597,32 +616,26 @@ void NetworkManager::checkConnection() {
             LOGI(TAG, "  RSSI: %d dBm", WiFi.RSSI());
             LOGI(TAG, "  MAC: %s", WiFi.macAddress().c_str());
 #endif
-
             markBootSuccessful();
-
-            if (on_connected_) {
+            if (on_connected_)
                 on_connected_();
-            }
         } else {
             LOGW(TAG, "Network Disconnected");
-
-            if (on_disconnected_) {
+            if (on_disconnected_)
                 on_disconnected_();
-            }
         }
-
         was_connected_ = connected;
     }
 
-    // Retry connection if disconnected (WiFi only)
-#if !OPENLUX_USE_ETHERNET
+#if OPENLUX_USE_ETHERNET
+    return;
+#endif
+
     if (!connected && (millis() - last_connect_attempt_ > CONNECT_RETRY_DELAY)) {
         LOGW(TAG, "Attempting to reconnect...");
-        logHeapStatus("reconnect_request");
         connectWiFi();
     }
 
-    // Periodic status log
     const uint32_t now_status = millis();
     if (connected && (now_status - last_status_log_ > STATUS_LOG_INTERVAL)) {
         LOGD(TAG, "WiFi Status: IP=%s, RSSI=%d dBm", WiFi.localIP().toString().c_str(),
@@ -630,64 +643,11 @@ void NetworkManager::checkConnection() {
         last_status_log_ = now_status;
     }
 
-#if WIFI_PERIODIC_SCAN_ENABLED
-    // Periodic scan for better AP
-    const uint32_t now_scan = millis();
-    if (connected && (now_scan - last_scan_ms_ > WIFI_PERIODIC_SCAN_INTERVAL_MS)) {
-        LOGW(TAG, "Periodic WiFi scan: checking for better AP...");
-        logHeapStatus("scan_begin");
-        last_scan_ms_ = now_scan;
-        bridge.onScanStateChanged(true, "Periodic scan");
-
-        int bestRSSI;
-        int bestNetworkIndex = scanAndFindBestAP(bestRSSI);
-        logHeapStatus("scan_post");
-
-        if (bestNetworkIndex >= 0) {
-            int currentRSSI = WiFi.RSSI();
-            String currentBSSID = WiFi.BSSIDstr();
-
-            // Check if the new AP is significantly better
-            if (bestRSSI > (currentRSSI + WIFI_RSSI_THRESHOLD_DBM)) {
-                String newBSSID = WiFi.BSSIDstr(bestNetworkIndex);
-                // Only roam if BSSID is different
-                if (!newBSSID.equalsIgnoreCase(currentBSSID)) {
-                    LOGW(TAG, "Found better AP! Current: %d dBm, New: %d dBm", currentRSSI,
-                         bestRSSI);
-                    LOGW(TAG, "Roaming from %s to %s", currentBSSID.c_str(), newBSSID.c_str());
-
-                    uint8_t* bssid = WiFi.BSSID(bestNetworkIndex);
-                    int32_t channel = WiFi.channel(bestNetworkIndex);
-
-                    // Force reconnection to the new AP
-                    WiFi.disconnect();
-                    delay(100);
-                    WiFi.begin(ssid_, password_, channel, bssid);
-
-                    // Reset connection state to trigger on_connected callback again eventually
-                    was_connected_ = false;
-                } else {
-                    LOGW(TAG, "Already connected to best AP");
-                }
-            } else {
-                LOGW(TAG, "Current AP is good enough (Current: %d, Best: %d)", currentRSSI,
-                     bestRSSI);
-            }
-        } else {
-            LOGW(TAG, "Periodic scan failed or no networks found");
-        }
-        WiFi.scanDelete();
-        logHeapStatus("scan_delete_periodic");
-        bridge.onScanStateChanged(false, "Periodic scan done");
+    if (connected) {
+        roamingIfNeeded();
     }
-#endif
-#else
-    // Ethernet: nothing more to do
-    return;
-#endif
 
     // Connectivity watchdog: escalate reconnect → restart interface → reboot
-#if !OPENLUX_USE_ETHERNET
     bool can_recover = has_credentials || WiFi.SSID().length() > 0;
     if (!connected) {
         if (disconnected_since_ == 0) {
@@ -728,12 +688,93 @@ void NetworkManager::checkConnection() {
         watchdog_restart_done_ = false;
         portal_opened_once_ = false;
     }
+}
+
+void NetworkManager::roamingIfNeeded() {
+#if WIFI_ROAMING_ENABLED
+    const uint32_t now_scan = millis();
+    const bool interval_elapsed = (now_scan - last_scan_ms_) > WIFI_ROAMING_INTERVAL_MS;
+    const int currentRSSI = getRSSI();
+
+    if (interval_elapsed && currentRSSI <= WIFI_ROAMING_RSSI_THRESHOLD_DBM) {
+        LOGW(TAG, "WiFi roaming: RSSI %d dBm <= threshold %d dBm, scanning for better AP...",
+             currentRSSI, WIFI_ROAMING_RSSI_THRESHOLD_DBM);
+        last_scan_ms_ = now_scan;
+        const auto guard = acquireScanGuard("roaming");
+        if (!guard) {
+            LOGW(TAG, "Skipping roaming scan: guard busy");
+            return;
+        }
+
+        int bestRSSI;
+        int bestNetworkIndex = scanAndFindBestAP(bestRSSI);
+
+        if (bestNetworkIndex >= 0) {
+            String currentBSSID = WiFi.BSSIDstr();
+            if (bestRSSI > currentRSSI) {
+                String newBSSID = WiFi.BSSIDstr(bestNetworkIndex);
+                if (!newBSSID.equalsIgnoreCase(currentBSSID)) {
+                    LOGW(TAG, "Roaming to AP %s (%d dBm) from %s (%d dBm)", newBSSID.c_str(),
+                         bestRSSI, currentBSSID.c_str(), currentRSSI);
+
+                    uint8_t* bssid = WiFi.BSSID(bestNetworkIndex);
+                    int32_t channel = WiFi.channel(bestNetworkIndex);
+
+                    WiFi.disconnect();
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                    WiFi.begin(ssid_, password_, channel, bssid);
+                    was_connected_ = false;
+                } else {
+                    LOGW(TAG, "Already connected to strongest AP (%d dBm)", currentRSSI);
+                }
+            } else {
+                LOGW(TAG, "No AP stronger than current RSSI %d dBm", currentRSSI);
+            }
+        } else {
+            LOGW(TAG, "WiFi roaming scan failed or configured SSID not found");
+        }
+        WiFi.scanDelete();
+    }
 #endif
 }
 
 void NetworkManager::handleOTA() {
     ArduinoOTA.handle();
 }
+
+#if OPENLUX_USE_ETHERNET
+void NetworkManager::handleEthernetEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+    (void) info; // Unused parameter
+    switch (event) {
+        case ARDUINO_EVENT_ETH_START:
+            ETH.setHostname(hostname_ ? hostname_ : WIFI_HOSTNAME);
+            LOGI(TAG, "ETH start");
+            break;
+        case ARDUINO_EVENT_ETH_CONNECTED:
+            LOGI(TAG, "ETH link up");
+            break;
+        case ARDUINO_EVENT_ETH_GOT_IP:
+            eth_connected_ = true;
+            LOGI(TAG, "ETH got IP: %s", ETH.localIP().toString().c_str());
+            LOGI(TAG, "  Gateway: %s", ETH.gatewayIP().toString().c_str());
+            LOGI(TAG, "  DNS: %s", ETH.dnsIP().toString().c_str());
+            LOGI(TAG, "  MAC: %s", ETH.macAddress().c_str());
+            markBootSuccessful();
+            if (on_connected_)
+                on_connected_();
+            break;
+        case ARDUINO_EVENT_ETH_DISCONNECTED:
+        case ARDUINO_EVENT_ETH_STOP:
+            if (eth_connected_ && on_disconnected_)
+                on_disconnected_();
+            eth_connected_ = false;
+            LOGW(TAG, "ETH disconnected");
+            break;
+        default:
+            break;
+    }
+}
+#endif
 
 #if !OPENLUX_USE_ETHERNET
 void NetworkManager::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {

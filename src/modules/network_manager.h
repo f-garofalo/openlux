@@ -47,6 +47,42 @@ class NetworkManager {
   public:
     static NetworkManager& getInstance();
 
+    class ScanGuard {
+      public:
+        ScanGuard(const ScanGuard&) = delete;
+        ScanGuard& operator=(const ScanGuard&) = delete;
+        ScanGuard(ScanGuard&& other) noexcept { moveFrom(std::move(other)); }
+        ScanGuard& operator=(ScanGuard&& other) noexcept {
+            if (this != &other) {
+                release();
+                moveFrom(std::move(other));
+            }
+            return *this;
+        }
+        ~ScanGuard() { release(); }
+        explicit operator bool() const { return active_; }
+        void release();
+
+      private:
+        friend class NetworkManager;
+        ScanGuard(NetworkManager* owner, bool active, const char* reason)
+            : owner_(owner), active_(active), reason_(reason) {}
+        void moveFrom(ScanGuard&& other) {
+            owner_ = other.owner_;
+            active_ = other.active_;
+            reason_ = other.reason_;
+            other.owner_ = nullptr;
+            other.active_ = false;
+            other.reason_ = nullptr;
+        }
+        NetworkManager* owner_ = nullptr;
+        bool active_ = false;
+        const char* reason_ = nullptr;
+    };
+
+    ScanGuard acquireScanGuard(const char* reason = nullptr);
+    bool isScanning() const { return scanning_in_progress_; }
+
     // Lifecycle
     void begin(const char* ssid, const char* password, const char* hostname);
     void loop(); // Call in main loop
@@ -114,6 +150,8 @@ class NetworkManager {
     bool connected_ = false;
 
     void checkConnection();
+    void roamingIfNeeded();
+    void roaming();
     void handleOTA();
 
     void runTask();
@@ -142,6 +180,8 @@ class NetworkManager {
     uint32_t last_connect_attempt_ = 0;
     uint32_t last_status_log_ = 0;
     uint32_t disconnected_since_ = 0;
+    bool scanning_in_progress_ = false;
+    const char* scan_owner_ = nullptr;
     bool watchdog_reconnect_done_ = false;
     bool watchdog_restart_done_ = false;
     bool watchdog_portal_done_ = false;
@@ -159,12 +199,18 @@ class NetworkManager {
 
     Preferences prefs_;
 
-    static constexpr uint32_t CONNECT_RETRY_DELAY = 5000;          // 5 seconds
-    static constexpr uint32_t STATUS_LOG_INTERVAL = 30000;         // 30 seconds
+    static constexpr uint32_t CONNECT_RETRY_DELAY = 5000; // 5 seconds
+    static constexpr uint32_t STATUS_LOG_INTERVAL = 120 * 1000;
     static constexpr uint32_t VALIDATION_INTERVAL_MS = 120 * 1000; // 120 seconds
 
     void logHeapStatus(const char* context);
+#if OPENLUX_USE_ETHERNET
+    void handleEthernetEvent(WiFiEvent_t event, WiFiEventInfo_t info);
+#endif
 #if !OPENLUX_USE_ETHERNET
     void handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info);
 #endif
+
+    bool beginScan(const char* reason);
+    void endScan();
 };

@@ -108,7 +108,7 @@ void MqttManager::connect() {
     wifi_client_.setTimeout(3);
 
     bool connected = false;
-    if (strlen(MQTT_USER) > 0) {
+    if (MQTT_USER[0] != '\0') {
         connected = mqtt_client_.connect(clientId.c_str(), MQTT_USER, MQTT_PASS,
                                          availability_topic_.c_str(), 0, true, "offline");
     } else {

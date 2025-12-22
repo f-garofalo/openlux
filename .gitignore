@@ -5,6 +5,8 @@
 # =============================================================================
 # DO NOT commit WiFi passwords or OTA passwords!
 src/secrets.h
+config/secrets.yaml
+config/openlux.local.yaml
 
 # =============================================================================
 # PLATFORMIO
@@ -35,6 +37,7 @@ src/secrets.h
 
 # Auto-generated files
 src/build_info.h
+src/config.h
 
 # =============================================================================
 # PYTHON
