@@ -9,6 +9,7 @@
 #pragma once
 
 #include "../config.h"
+#include "operation_guard.h"
 
 #include <Arduino.h>
 #include <ArduinoOTA.h>
@@ -47,45 +48,13 @@ class NetworkManager {
   public:
     static NetworkManager& getInstance();
 
-    class ScanGuard {
-      public:
-        ScanGuard(const ScanGuard&) = delete;
-        ScanGuard& operator=(const ScanGuard&) = delete;
-        ScanGuard(ScanGuard&& other) noexcept { moveFrom(std::move(other)); }
-        ScanGuard& operator=(ScanGuard&& other) noexcept {
-            if (this != &other) {
-                release();
-                moveFrom(std::move(other));
-            }
-            return *this;
-        }
-        ~ScanGuard() { release(); }
-        explicit operator bool() const { return active_; }
-        void release();
-
-      private:
-        friend class NetworkManager;
-        ScanGuard(NetworkManager* owner, bool active, const char* reason)
-            : owner_(owner), active_(active), reason_(reason) {}
-        void moveFrom(ScanGuard&& other) {
-            owner_ = other.owner_;
-            active_ = other.active_;
-            reason_ = other.reason_;
-            other.owner_ = nullptr;
-            other.active_ = false;
-            other.reason_ = nullptr;
-        }
-        NetworkManager* owner_ = nullptr;
-        bool active_ = false;
-        const char* reason_ = nullptr;
-    };
-
-    ScanGuard acquireScanGuard(const char* reason = nullptr);
-    bool isScanning() const { return scanning_in_progress_; }
 
     // Lifecycle
     void begin(const char* ssid, const char* password, const char* hostname);
     void loop(); // Call in main loop
+
+    // WiFi status and scanning
+    bool isScanning() const { return OperationGuardManager::getInstance().isScanning(); }
 
     // WiFi configuration
     void setStaticIP(IPAddress ip, IPAddress gateway, IPAddress subnet, IPAddress dns1);
@@ -113,7 +82,7 @@ class NetworkManager {
     void setupOTA(const char* hostname, const char* password, uint16_t port = 3232);
     void enableOTA(bool enable) { ota_enabled_ = enable; }
     bool isOTAEnabled() const { return ota_enabled_; }
-    bool isOTAInProgress() const { return ota_in_progress_; }
+    bool isOTAInProgress() const { return OperationGuardManager::getInstance().isOTAInProgress(); }
 
     // mDNS
     void setupMDNS(const char* hostname);
@@ -172,7 +141,6 @@ class NetworkManager {
 
     bool was_connected_ = false;
     bool ota_enabled_ = false;
-    bool ota_in_progress_ = false;
     bool portal_opened_once_ = false;
     bool boot_failures_loaded_ = false;
     bool use_ethernet_ = false;
@@ -180,8 +148,6 @@ class NetworkManager {
     uint32_t last_connect_attempt_ = 0;
     uint32_t last_status_log_ = 0;
     uint32_t disconnected_since_ = 0;
-    bool scanning_in_progress_ = false;
-    const char* scan_owner_ = nullptr;
     bool watchdog_reconnect_done_ = false;
     bool watchdog_restart_done_ = false;
     bool watchdog_portal_done_ = false;
@@ -197,11 +163,13 @@ class NetworkManager {
     OTAEndCallback on_ota_end_ = nullptr;
     OTAErrorCallback on_ota_error_ = nullptr;
 
+    OperationGuard ota_guard_ = OperationGuard(false, OperationGuard::OperationType::OTA_OPERATION);
+
     Preferences prefs_;
 
     static constexpr uint32_t CONNECT_RETRY_DELAY = 5000; // 5 seconds
-    static constexpr uint32_t STATUS_LOG_INTERVAL = 120 * 1000;
-    static constexpr uint32_t VALIDATION_INTERVAL_MS = 120 * 1000; // 120 seconds
+    static constexpr uint32_t STATUS_LOG_INTERVAL = 5 * 60 * 1000;
+    static constexpr uint32_t VALIDATION_INTERVAL_MS = 3 * 60 * 1000;
 
     void logHeapStatus(const char* context);
 #if OPENLUX_USE_ETHERNET

@@ -306,8 +306,9 @@ void CommandManager::registerCoreCommands() {
     // wifi_scan: list nearby networks (SSID/RSSI)
     registerCommand("wifi_scan", "Scan WiFi networks (SSID/RSSI)",
                     [](const std::vector<String>&) -> CommandResult {
-                        auto& net = NetworkManager::getInstance();
-                        auto guard = net.acquireScanGuard("manual_scan");
+                        auto& guard_mgr = OperationGuardManager::getInstance();
+                        auto guard = guard_mgr.acquireGuard(
+                            OperationGuard::OperationType::WIFI_SCAN, "manual_scan");
                         if (!guard) {
                             return CommandResult{false, "Scan already running"};
                         }

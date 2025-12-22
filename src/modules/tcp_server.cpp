@@ -190,9 +190,7 @@ void TCPServer::handle_new_client(void* arg, AsyncClient* client) {
     if (!server->accepting_connections_) {
         LOGW(TAG, "Server not ready, rejecting connection from %s:%d",
              client->remoteIP().toString().c_str(), client->remotePort());
-        client->close(true);
-        client->free();
-        delete client;
+        server->destroy_client(client);
         return;
     }
 
@@ -200,9 +198,7 @@ void TCPServer::handle_new_client(void* arg, AsyncClient* client) {
     if (server->clients_.size() >= server->max_clients_) {
         LOGW(TAG, "Max clients reached, rejecting connection from %s:%d",
              client->remoteIP().toString().c_str(), client->remotePort());
-        client->close(true);
-        client->free();
-        delete client;
+        server->destroy_client(client);
         return;
     }
 
@@ -356,6 +352,7 @@ void TCPServer::process_client_data(TCPClient* tcp_client) {
 
     // Try to parse and forward to bridge
     // The bridge will handle the packet and send response back
+    // (Bridge will acquire TCP_CLIENT_PROCESSING guard for coordination)
     bridge_->process_wifi_request(tcp_client->rx_buffer.data(), tcp_client->rx_buffer.size(),
                                   tcp_client);
 
@@ -365,12 +362,18 @@ void TCPServer::process_client_data(TCPClient* tcp_client) {
 }
 
 void TCPServer::check_client_timeouts() {
+    if (clients_.empty()) {
+        return;
+    }
+
     const uint32_t now = millis(); // Single call for all clients
 
     for (auto it = clients_.begin(); it != clients_.end();) {
-        if (now - it->last_activity > CLIENT_TIMEOUT_MS) {
-            LOGW(TAG, "Client timeout: %s (idle for %d ms)", it->remote_ip.c_str(),
-                 now - it->last_activity);
+        // Calculate idle time, handling uint32_t wraparound
+        const uint32_t idle_time = now - it->last_activity;
+
+        if (idle_time > CLIENT_TIMEOUT_MS) {
+            LOGW(TAG, "Client timeout: %s (idle for %u ms)", it->remote_ip.c_str(), idle_time);
 
             AsyncClient* c = it->client;
 

@@ -123,7 +123,7 @@
  * and reconnect if a stronger AP is found.
  * Useful in mesh networks where the device might stick to a distant AP.
  */
-#define WIFI_ROAMING_ENABLED 1
+#define WIFI_ROAMING_ENABLED 0
 #define WIFI_ROAMING_INTERVAL_MS (2400 * 1000)
 #define WIFI_ROAMING_RSSI_THRESHOLD_DBM -75
 
@@ -259,6 +259,7 @@
 #define OPENLUX_LOG_LEVEL_COMMAND 1
 #define OPENLUX_LOG_LEVEL_NTP 1
 #define OPENLUX_LOG_LEVEL_WEB 1
+#define OPENLUX_LOG_LEVEL_GUARD 1
 
 /**
  * @brief Performance Tuning

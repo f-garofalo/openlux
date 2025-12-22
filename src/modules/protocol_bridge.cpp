@@ -53,58 +53,37 @@ void ProtocolBridge::loop() {
     }
 }
 
-void ProtocolBridge::onScanStateChanged(bool active, const char* reason) {
-    if (active) {
-        if (paused_) {
-            return;
-        }
-        paused_ = true;
-        pause_reason_ = reason ? reason : "Scan";
-        LOGW(TAG, "Pausing bridge (reason: %s)", pause_reason_.c_str());
-
-        const uint32_t start = millis();
-        const uint32_t wait_ms = 1000;
-        while (waiting_rs485_response_ && millis() - start < wait_ms) {
-            rs485_->loop();
-            vTaskDelay(pdMS_TO_TICKS(5));
-        }
-        if (waiting_rs485_response_) {
-            LOGW(TAG, "RS485 still busy after %lums", millis() - start);
-        }
-        if (tcp_server_) {
-            tcp_server_->reject_connections();
-        }
-    } else {
-        if (!paused_) {
-            return;
-        }
-        paused_ = false;
-        LOGW(TAG, "Resuming bridge (previous pause: %s)", pause_reason_.c_str());
-        pause_reason_.clear();
-        if (tcp_server_) {
-            tcp_server_->accept_connections();
-        }
-    }
-}
-
 void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TCPClient* client) {
     if (!is_ready()) {
         LOGW(TAG, "Bridge not ready (tcp_server=%p, rs485=%p)", tcp_server_, rs485_);
         return;
     }
 
-    if (paused_) {
-        LOGW(TAG, "Bridge paused (%s), rejecting TCP request", pause_reason_.c_str());
+    // Check if any blocking operation (other than TCP) is in progress
+    // WiFi scan, OTA, and Network validation can interfere with TCP processing
+    auto& guard_mgr = OperationGuardManager::getInstance();
+    if (guard_mgr.hasActiveOperation()) {
+        OperationGuard::OperationType active_op = guard_mgr.getActiveOperation();
+        // if (active_op != OperationGuard::OperationType::TCP_CLIENT_PROCESSING) {
+        const char* op_name = OperationGuardManager::getOperationTypeName(active_op);
+        LOGW(TAG, "Bridge paused (%s), rejecting request, operation in progress: ", op_name);
         send_error_response(client, "Bridge paused");
         failed_requests_++;
         return;
+        //}
     }
+
+    // Acquire TCP operation guard here - this is where we actually process the request
+    // and communicate with RS485
+    auto guard = guard_mgr.acquireGuard(OperationGuard::OperationType::TCP_CLIENT_PROCESSING,
+                                        "process_wifi_request");
 
     total_requests_++;
 
-    // Parse WiFi request first
-    String req_tag = String("[REQ#") + total_requests_ + "] ";
-    LOGD(TAG, "%sWiFi raw (first 40b): %s", req_tag.c_str(),
+    // Use static buffers instead of String to avoid memory fragmentation
+    char req_tag[20];
+    snprintf(req_tag, sizeof(req_tag), "[REQ#%u] ", total_requests_);
+    LOGD(TAG, "%sWiFi raw (first 40b): %s", req_tag,
          TcpProtocol::format_hex(data, min(length, (size_t) 40)).c_str());
 
     TcpParseResult parse_result = TcpProtocol::parse_request(data, length);
@@ -116,21 +95,21 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
         return;
     }
 
-    // Build operation description
-    String op_type;
-    String op_details;
+    // Build operation description using static buffers
+    const char* op_type = "UNKNOWN";
+    char op_details[64];
 
     if (parse_result.is_write_operation) {
         if (parse_result.write_values.size() == 1) {
             op_type = "WRITE_SINGLE";
-            op_details = String("reg=") + String(parse_result.start_register) + " val=0x" +
-                         String(parse_result.write_values[0], HEX);
+            snprintf(op_details, sizeof(op_details), "reg=%u val=0x%X", parse_result.start_register,
+                     parse_result.write_values[0]);
         } else {
             op_type = "WRITE_MULTI";
-            op_details =
-                String("regs=") + String(parse_result.start_register) + "-" +
-                String(parse_result.start_register + parse_result.write_values.size() - 1) + " (" +
-                String(parse_result.write_values.size()) + " vals)";
+            snprintf(op_details, sizeof(op_details), "regs=%u-%u (%zu vals)",
+                     parse_result.start_register,
+                     parse_result.start_register + parse_result.write_values.size() - 1,
+                     parse_result.write_values.size());
         }
     } else {
         if (parse_result.function_code == 0x03) {
@@ -138,16 +117,17 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
         } else if (parse_result.function_code == 0x04) {
             op_type = "READ_INPUT";
         } else {
-            op_type = "READ_0x" + String(parse_result.function_code, HEX);
+            op_type = "READ";
         }
-        op_details = String("regs=") + String(parse_result.start_register) + "-" +
-                     String(parse_result.start_register + parse_result.register_count - 1) + " (" +
-                     String(parse_result.register_count) + " regs)";
+        snprintf(op_details, sizeof(op_details), "regs=%u-%u (%u regs)",
+                 parse_result.start_register,
+                 parse_result.start_register + parse_result.register_count - 1,
+                 parse_result.register_count);
     }
 
-    LOGI(TAG, "━━━ Request #%d: %s %s from %s ━━━", total_requests_, op_type.c_str(),
-         op_details.c_str(), client ? client->remote_ip.c_str() : "unknown");
-    LOGD(TAG, "%sInverter SN: %s", req_tag.c_str(),
+    LOGI(TAG, "━━━ Request #%u: %s %s from %s ━━━", total_requests_, op_type, op_details,
+         client ? client->remote_ip.c_str() : "unknown");
+    LOGD(TAG, "%sInverter SN: %s", req_tag,
          TcpProtocol::format_serial(parse_result.inverter_serial).c_str());
 
     // Check if we're already processing a request
@@ -240,24 +220,35 @@ void ProtocolBridge::process_rs485_response() {
                 return;
             }
 
-            // Build value summary
-            String value_summary = "";
+            // Build value summary using static buffer instead of String
+            char value_summary[128] = "";
             if (rs485_result.register_count == 1 && !rs485_result.register_values.empty()) {
-                value_summary = String(" val=0x") + String(rs485_result.register_values[0], HEX);
+                snprintf(value_summary, sizeof(value_summary), " val=0x%X",
+                         rs485_result.register_values[0]);
             } else if (rs485_result.register_count > 0 && !rs485_result.register_values.empty()) {
-                value_summary = String(" [0x") + String(rs485_result.register_values[0], HEX);
+                char* pos = value_summary;
+                int remaining = sizeof(value_summary);
+
+                int written = snprintf(pos, remaining, " [0x%X", rs485_result.register_values[0]);
+                pos += written;
+                remaining -= written;
+
                 for (size_t i = 1; i < min((size_t) 3, rs485_result.register_values.size()); i++) {
-                    value_summary += String(", 0x") + String(rs485_result.register_values[i], HEX);
+                    written = snprintf(pos, remaining, ", 0x%X", rs485_result.register_values[i]);
+                    pos += written;
+                    remaining -= written;
                 }
+
                 if (rs485_result.register_count > 3) {
-                    value_summary += "...";
+                    snprintf(pos, remaining, "...]");
+                } else {
+                    snprintf(pos, remaining, "]");
                 }
-                value_summary += "]";
             }
 
             LOGI(TAG, "[REQ#%d] OK func=0x%02X regs=%d start=%d time=%lums%s", total_requests_,
                  static_cast<uint8_t>(rs485_result.function_code), rs485_result.register_count,
-                 rs485_result.start_address, elapsed, value_summary.c_str());
+                 rs485_result.start_address, elapsed, value_summary);
 
             send_wifi_response(current_request_.client, rs485_result);
             successful_requests_++;

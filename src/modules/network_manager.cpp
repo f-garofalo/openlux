@@ -9,6 +9,7 @@
 
 #include "../config.h"
 #include "logger.h"
+#include "operation_guard.h"
 #include "protocol_bridge.h"
 #include "system_manager.h"
 
@@ -33,11 +34,13 @@ void NetworkManager::taskTrampoline(void* arg) {
 }
 
 void NetworkManager::runTask() {
-    if (!ota_in_progress_) {
+    auto& guard_mgr = OperationGuardManager::getInstance();
+
+    if (!guard_mgr.isOTAInProgress()) {
         checkConnection();
     }
 
-    if (ota_enabled_ && !ota_in_progress_) {
+    if (ota_enabled_ && !guard_mgr.isOTAInProgress()) {
         handleOTA();
     }
 }
@@ -187,7 +190,10 @@ void NetworkManager::setupOTA(const char* hostname, const char* password, uint16
     ArduinoOTA.setPort(port);
 
     ArduinoOTA.onStart([this]() {
-        ota_in_progress_ = true;
+        auto& guard_mgr = OperationGuardManager::getInstance();
+        ota_guard_ =
+            guard_mgr.acquireGuard(OperationGuard::OperationType::OTA_OPERATION, "ArduinoOTA");
+
         String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
         LOGI(TAG, "OTA Update Started: %s", type.c_str());
 
@@ -203,7 +209,7 @@ void NetworkManager::setupOTA(const char* hostname, const char* password, uint16
         local_prefs.putString("reboot_reason", "OTA");
         local_prefs.end();
         LOGI(TAG, "OTA Update Finished");
-        ota_in_progress_ = false;
+        ota_guard_.release(); // Release the OTA guard
 
         // Call user callback
         if (on_ota_end_) {
@@ -240,7 +246,7 @@ void NetworkManager::setupOTA(const char* hostname, const char* password, uint16
         else if (error == OTA_END_ERROR)
             LOGE(TAG, "End Failed");
 
-        ota_in_progress_ = false;
+        ota_guard_.release(); // Release the OTA guard on error
 
         // Call user callback
         if (on_ota_error_) {
@@ -279,6 +285,10 @@ void NetworkManager::softReconnect() {
 }
 
 void NetworkManager::restartInterface() {
+    if (isScanning()) {
+        LOGW(TAG, "restartInterface ignored: scan in progress");
+        return;
+    }
     LOGI(TAG, "WiFi interface restart (STA)");
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
@@ -364,44 +374,6 @@ bool NetworkManager::startProvisioningPortal() {
 }
 #endif
 
-NetworkManager::ScanGuard NetworkManager::acquireScanGuard(const char* reason) {
-    return ScanGuard(this, beginScan(reason), reason);
-}
-
-bool NetworkManager::beginScan(const char* reason) {
-    if (scanning_in_progress_) {
-        LOGW(TAG, "Scan already in progress (owner=%s)", scan_owner_ ? scan_owner_ : "?");
-        return false;
-    }
-    scanning_in_progress_ = true;
-    scan_owner_ = reason;
-    LOGD(TAG, "WiFi scan guard acquired (%s)", reason ? reason : "unknown");
-
-    auto& bridge = ProtocolBridge::getInstance();
-    bridge.onScanStateChanged(true, reason ? reason : "Wi-Fi scan");
-
-    return true;
-}
-
-void NetworkManager::endScan() {
-    if (!scanning_in_progress_)
-        return;
-    LOGD(TAG, "WiFi scan guard released (%s)", scan_owner_ ? scan_owner_ : "unknown");
-    scanning_in_progress_ = false;
-    scan_owner_ = nullptr;
-}
-
-void NetworkManager::ScanGuard::release() {
-    if (owner_ && active_) {
-        auto& bridge = ProtocolBridge::getInstance();
-        String msg = reason_ ? String(reason_) + " complete" : "Scan complete";
-        bridge.onScanStateChanged(false, msg.c_str());
-
-        owner_->endScan();
-        active_ = false;
-    }
-}
-
 int NetworkManager::scanAndFindBestAP(int& bestRSSI) {
     // NOTE: Assumes ScanGuard is already held by caller
 
@@ -448,9 +420,10 @@ void NetworkManager::connectWiFi(bool force_scan) {
 #if OPENLUX_USE_ETHERNET
     return;
 #else
-    auto guard = acquireScanGuard("connectWiFi");
+    auto& guard_mgr = OperationGuardManager::getInstance();
+    auto guard = guard_mgr.acquireGuard(OperationGuard::OperationType::WIFI_SCAN, "connectWiFi");
     if (!guard) {
-        LOGW(TAG, "Cannot scan: another scan is in progress");
+        LOGW(TAG, "Cannot scan: another operation is in progress");
         return;
     }
 
@@ -493,6 +466,7 @@ void NetworkManager::connectWiFi(bool force_scan) {
 }
 
 bool NetworkManager::validateConnection() {
+    LOGI(TAG, "Starting validation connection check...");
 #if OPENLUX_USE_ETHERNET
     if (!eth_connected_)
         return false;
@@ -508,43 +482,54 @@ bool NetworkManager::validateConnection() {
         return true;
     }
 
-    {
-        WiFiClient client;
-        client.setNoDelay(true);
-        client.setTimeout(300);
-        if (client.connect(gateway, 53, 300)) {
-            client.stop();
-            LOGD(TAG, "Connection validated via Gateway:53");
-            return true;
-        }
+    // Check if TCP operations are in progress - skip validation if they are
+    auto& guard_mgr = OperationGuardManager::getInstance();
+    if (!guard_mgr.canPerformOperation(OperationGuard::OperationType::NETWORK_VALIDATION)) {
+        LOGD(TAG, "Skipping connection validation: blocking operation in progress");
+        return gateway_reachable_; // Return last known state
     }
 
+    {
+        auto guard = guard_mgr.acquireGuard(OperationGuard::OperationType::NETWORK_VALIDATION);
+
+        {
+            WiFiClient client;
+            client.setNoDelay(true);
+            client.setTimeout(100); // Reduced timeout
+            if (client.connect(gateway, 53, 100)) {
+                client.stop();
+                LOGD(TAG, "Connection validated via Gateway:53");
+                return true;
+            }
+        }
+
 #if defined(MQTT_HOST)
-    {
-        WiFiClient client;
-        client.setNoDelay(true);
-        client.setTimeout(150);
-        if (client.connect(MQTT_HOST, MQTT_PORT, 150)) {
-            client.stop();
-            LOGD(TAG, "Connection validated via MQTT broker");
-            return true;
+        {
+            WiFiClient client;
+            client.setNoDelay(true);
+            client.setTimeout(50); // Reduced timeout
+            if (client.connect(MQTT_HOST, MQTT_PORT, 50)) {
+                client.stop();
+                LOGD(TAG, "Connection validated via MQTT broker");
+                return true;
+            }
+            LOGW(TAG, "Failed to connect to gateway %s (port 53) and MQTT %s:%d",
+                 gateway.toString().c_str(), MQTT_HOST, MQTT_PORT);
         }
-        LOGW(TAG, "Failed to connect to gateway %s (port 53) and MQTT %s:%d",
-             gateway.toString().c_str(), MQTT_HOST, MQTT_PORT);
-    }
 #else
-    {
-        WiFiClient client;
-        client.setNoDelay(true);
-        client.setTimeout(150);
-        if (client.connect(gateway, 80, 150)) {
-            client.stop();
-            LOGD(TAG, "Connection validated via Gateway:80");
-            return true;
+        {
+            WiFiClient client;
+            client.setNoDelay(true);
+            client.setTimeout(50); // Reduced timeout
+            if (client.connect(gateway, 80, 50)) {
+                client.stop();
+                LOGD(TAG, "Connection validated via Gateway:80");
+                return true;
+            }
+            LOGW(TAG, "Failed to connect to gateway %s (ports 53, 80)", gateway.toString().c_str());
         }
-        LOGW(TAG, "Failed to connect to gateway %s (ports 53, 80)", gateway.toString().c_str());
-    }
 #endif
+    }
 
     return false;
 }
@@ -702,9 +687,12 @@ void NetworkManager::roamingIfNeeded() {
         LOGW(TAG, "WiFi roaming: RSSI %d dBm <= threshold %d dBm, scanning for better AP...",
              currentRSSI, WIFI_ROAMING_RSSI_THRESHOLD_DBM);
         last_scan_ms_ = now_scan;
-        const auto guard = acquireScanGuard("roaming");
+
+        auto& guard_mgr = OperationGuardManager::getInstance();
+        const auto guard =
+            guard_mgr.acquireGuard(OperationGuard::OperationType::WIFI_SCAN, "roaming");
         if (!guard) {
-            LOGW(TAG, "Skipping roaming scan: guard busy");
+            LOGW(TAG, "Skipping roaming scan: blocking operation in progress");
             return;
         }
 

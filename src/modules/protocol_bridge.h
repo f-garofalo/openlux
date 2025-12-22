@@ -7,6 +7,7 @@
  */
 #pragma once
 
+#include "operation_guard.h"
 #include "rs485_manager.h"
 #include "tcp_protocol.h"
 #include "tcp_server.h"
@@ -42,7 +43,6 @@ class ProtocolBridge {
     void set_tcp_server(TCPServer* server) { tcp_server_ = server; }
     void set_rs485_manager(RS485Manager* rs485) { rs485_ = rs485; }
     void set_dongle_serial(const String& serial) { dongle_serial_ = serial; }
-    void onScanStateChanged(bool active, const char* reason);
 
     // Process incoming WiFi request from TCP
     void process_wifi_request(const uint8_t* data, size_t length, TCPClient* client);
@@ -68,9 +68,6 @@ class ProtocolBridge {
     TCPServer* tcp_server_ = nullptr;
     RS485Manager* rs485_ = nullptr;
     String dongle_serial_;
-    bool paused_ = false;
-    String pause_reason_;
-    uint32_t resume_retry_ms_ = 0;
 
     BridgeRequest current_request_;
     bool waiting_rs485_response_ = false;

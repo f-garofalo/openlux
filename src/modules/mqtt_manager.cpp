@@ -23,7 +23,7 @@ MqttManager& MqttManager::getInstance() {
     return instance;
 }
 
-MqttManager::MqttManager() : mqtt_client_(wifi_client_) {}
+MqttManager::MqttManager() : mqtt_client_(net_client_) {}
 
 void MqttManager::begin() {
     if (strlen(MQTT_HOST) == 0) {
@@ -58,6 +58,11 @@ void MqttManager::loop() {
         // Reset reconnect timer when network is down to avoid spam
         if (mqtt_client_.connected()) {
             mqtt_client_.disconnect();
+        }
+        // Cleanup network client socket if persistent failures (avoid socket zombie leak)
+        if (consecutive_failures_ >= 5 && net_client_.connected()) {
+            LOGD(TAG, "Cleaning up zombie socket after %u failures", consecutive_failures_);
+            net_client_.stop();
         }
         return;
     }
@@ -105,7 +110,7 @@ void MqttManager::connect() {
         clientId += "-" + mac.substring(6);
     }
 
-    wifi_client_.setTimeout(3);
+    net_client_.setTimeout(3);
 
     bool connected = false;
     if (MQTT_USER[0] != '\0') {
@@ -126,6 +131,13 @@ void MqttManager::connect() {
     } else {
         consecutive_failures_++;
         int state = mqtt_client_.state();
+
+        // Clean up socket zombie after multiple failures to prevent memory leak
+        // This prevents the network client from holding onto a stale connection
+        if (consecutive_failures_ >= 3 && net_client_.connected()) {
+            LOGD(TAG, "Closing zombie socket after failed connection attempt");
+            net_client_.stop();
+        }
 
         // Only log error every 5 failures to reduce spam during network issues
         if (consecutive_failures_ == 1 || consecutive_failures_ % 5 == 0) {

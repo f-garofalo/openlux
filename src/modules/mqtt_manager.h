@@ -15,7 +15,11 @@
 #include <Arduino.h>
 
 #include <PubSubClient.h>
+#if OPENLUX_USE_ETHERNET
+#include <Ethernet.h>
+#else
 #include <WiFiClient.h>
+#endif
 
 class MqttManager {
   public:
@@ -39,7 +43,11 @@ class MqttManager {
     void onMessage(char* topic, uint8_t* payload, unsigned int length);
     void subscribeTopics();
 
-    WiFiClient wifi_client_;
+#if OPENLUX_USE_ETHERNET
+    EthernetClient net_client_; // For Ethernet
+#else
+    WiFiClient net_client_; // For WiFi
+#endif
     PubSubClient mqtt_client_;
 
     uint32_t last_reconnect_attempt_ = 0;
