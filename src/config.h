@@ -123,7 +123,7 @@
  * and reconnect if a stronger AP is found.
  * Useful in mesh networks where the device might stick to a distant AP.
  */
-#define WIFI_ROAMING_ENABLED 0
+#define WIFI_ROAMING_ENABLED 1
 #define WIFI_ROAMING_INTERVAL_MS (2400 * 1000)
 #define WIFI_ROAMING_RSSI_THRESHOLD_DBM -75
 
@@ -225,9 +225,8 @@
 /**
  * @brief Firmware Information
  */
-#define FIRMWARE_VERSION "1.0.3"            ///< Semantic version
-#define FIRMWARE_NAME "OpenLux WiFi Bridge" ///< Project name
-#include "build_info.h"                     ///< Auto-generated build timestamp
+#include "build_info.h" ///< Auto-generated build timestamp
+#include "version.h"
 
 /**
  * @brief Identifiers

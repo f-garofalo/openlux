@@ -514,6 +514,7 @@ bool NetworkManager::validateConnection() {
         client.setTimeout(300);
         if (client.connect(gateway, 53, 300)) {
             client.stop();
+            LOGD(TAG, "Connection validated via Gateway:53");
             return true;
         }
     }
@@ -538,6 +539,7 @@ bool NetworkManager::validateConnection() {
         client.setTimeout(150);
         if (client.connect(gateway, 80, 150)) {
             client.stop();
+            LOGD(TAG, "Connection validated via Gateway:80");
             return true;
         }
         LOGW(TAG, "Failed to connect to gateway %s (ports 53, 80)", gateway.toString().c_str());

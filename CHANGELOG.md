@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - Placeholder for future changes.
 
+## [1.0.4] - 2025-12-22
+### Added
+- **MQTT Support**: Full MQTT integration for telemetry publishing and remote command execution with configurable broker, topics, and Home Assistant discovery prefix.
+- **Enhanced WiFi Roaming**: Improved WiFi roaming with scan guard mechanism and refined connection validation logic to prevent reconnection loops.
+- **WiFi Channel Reporting**: WiFi channel information is now reported in status and system diagnostics commands.
+- **Improved Network Validation**: Enhanced active connection validation with better error handling and stability improvements.
+- **WiFi TX Power Reporting**: Added WiFi TX power information to command output and system diagnostics.
+
+### Fixed
+- Improved stability and reliability of WiFi connection management with better validation of active connections.
+- Enhanced error handling in network operations to reduce spurious reconnection attempts.
+- Improved logging consistency across all network-related modules.
+
+### Changed
+- Refactored network manager internals for better separation of concerns and improved maintainability.
+- Enhanced documentation with dual dongle mode schematic and additional hardware references.
+
 ## [1.0.3] - 2025-12-16
 ### Added
 - **Smart WiFi Roaming**: Automatically scans and connects to the strongest Access Point (AP) on boot.
