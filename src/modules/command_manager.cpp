@@ -414,4 +414,36 @@ void CommandManager::registerCoreCommands() {
                         }
                         return CommandResult{true, tcp.describe_clients()};
                     });
+
+    // pause: block all RS485 communication (e.g., for official dongle firmware update)
+    registerCommand("pause", "Pause RS485 communication (maintenance/firmware update)",
+                    [](const std::vector<String>&) -> CommandResult {
+                        auto& bridge = ProtocolBridge::getInstance();
+                        if (bridge.is_paused()) {
+                            return CommandResult{true, "Bridge already paused"};
+                        }
+                        bridge.set_pause(true);
+                        LOGI(CMD_TAG, "Bridge paused - RS485 communication blocked");
+                        return CommandResult{true, "Bridge paused - all requests will be rejected"};
+                    });
+
+    // resume: unblock RS485 communication
+    registerCommand("resume", "Resume RS485 communication (end maintenance)",
+                    [](const std::vector<String>&) -> CommandResult {
+                        auto& bridge = ProtocolBridge::getInstance();
+                        if (!bridge.is_paused()) {
+                            return CommandResult{true, "Bridge already running"};
+                        }
+                        bridge.set_pause(false);
+                        LOGI(CMD_TAG, "Bridge resumed - RS485 communication active");
+                        return CommandResult{true, "Bridge resumed - requests are accepted again"};
+                    });
+
+    // pause_status: show pause state
+    registerCommand("pause_status", "Show bridge pause state",
+                    [](const std::vector<String>&) -> CommandResult {
+                        auto& bridge = ProtocolBridge::getInstance();
+                        String state = bridge.is_paused() ? "PAUSED" : "RUNNING";
+                        return CommandResult{true, "Bridge state: " + state};
+                    });
 }

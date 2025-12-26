@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 ### Added
 - **InverterProtocol Module**: New dedicated inverter protocol implementation
+- **Bridge Pause/Resume Commands**: Manual maintenance mode for firmware updates
+  - Use case: Official dongle firmware update without disconnecting OpenLux
 
 ### Changed
 - **TCPServer/TCPProtocol Refactoring**: Improved protocol handling and message routing

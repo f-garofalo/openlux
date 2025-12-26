@@ -49,6 +49,8 @@ class ProtocolBridge {
 
     // Status
     bool is_ready() const { return tcp_server_ != nullptr && rs485_ != nullptr; }
+    bool is_paused() const { return paused_; }
+    void set_pause(bool paused) { paused_ = paused; }
     uint32_t get_total_requests() const { return total_requests_; }
     uint32_t get_successful_requests() const { return successful_requests_; }
     uint32_t get_failed_requests() const { return failed_requests_; }
@@ -71,6 +73,7 @@ class ProtocolBridge {
     BridgeRequest current_request_;
     bool waiting_rs485_response_ = false;
     uint32_t last_request_time_ = 0;
+    bool paused_ = false;
 
     // Statistics
     uint32_t total_requests_ = 0;

@@ -59,6 +59,14 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
         return;
     }
 
+    // Check if bridge is manually paused
+    if (paused_) {
+        LOGW(TAG, "Bridge paused by user, rejecting request");
+        send_error_response(client, "Bridge paused (maintenance mode)");
+        failed_requests_++;
+        return;
+    }
+
     // Check if any blocking operation (other than TCP) is in progress
     // WiFi scan, OTA, and Network validation can interfere with TCP processing
     auto& guard_mgr = OperationGuardManager::getInstance();
