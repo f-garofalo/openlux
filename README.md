@@ -14,7 +14,7 @@
 
 ## 🎯 Overview
 
-**OpenLux** is an ESP32-based firmware that implements a Luxpower-compatible (unofficial) WiFi dongle protocol, enabling direct communication between your Luxpower/EG4 inverter and Home Assistant. This open-source solution eliminates the need for proprietary hardware and provides full local control of your solar installation.
+**OpenLux** is an ESP32-based firmware that implements a protocol-compatible (unofficial) WiFi dongle bridge, enabling direct communication between your solar inverter and Home Assistant. This open-source solution eliminates the need for proprietary hardware and provides full local control of your solar installation.
 
 **Why OpenLux?**
 - 🆓 Free & Open Source - No expensive proprietary dongles
@@ -30,7 +30,7 @@
 
 ## ✨ Features
 
-- ✅ **Network Bridge (WiFi/Ethernet)** - Implements a Luxpower-compatible (unofficial) dongle over TCP port 8000
+- ✅ **Network Bridge (WiFi/Ethernet)** - Implements a protocol-compatible (unofficial) dongle over TCP port 8000
 - ✅ **RS485 Communication** - Full Modbus RTU protocol support
 - ✅ **Protocol Translation** - Seamless WiFi ↔ RS485 conversion
 - ✅ **Read/Write Operations** - Full register access (0x03, 0x04, 0x06, 0x10)
@@ -405,7 +405,7 @@ Have a feature request? We'd love to hear it!
 **Built with:**
 - [ESP32](https://www.espressif.com/en/products/socs/esp32) - Microcontroller
 - [PlatformIO](https://platformio.org/) - Development platform
-- [AsyncTCP-esphome](https://github.com/esphome/AsyncTCP) - TCP library
+- [AsyncTCP](https://github.com/ESP32Async/AsyncTCP) - TCP library
 
 ---
 

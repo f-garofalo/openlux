@@ -155,7 +155,7 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
     if (parse_result.is_write_operation) {
         sent = rs485_->send_write_request(parse_result.start_register, parse_result.write_values);
     } else {
-        LuxFunctionCode func = static_cast<LuxFunctionCode>(parse_result.function_code);
+        ModbusFunctionCode func = static_cast<ModbusFunctionCode>(parse_result.function_code);
         sent = rs485_->send_read_request(func, parse_result.start_register,
                                          parse_result.register_count);
     }
@@ -170,7 +170,7 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
     last_request_time_ = millis();
 }
 
-bool ProtocolBridge::validate_response_match(const LuxParseResult& result,
+bool ProtocolBridge::validate_response_match(const ParseResult& result,
                                              const TcpParseResult& request) {
     // Check function code
     if (static_cast<uint8_t>(result.function_code) != request.function_code) {
@@ -201,7 +201,7 @@ bool ProtocolBridge::validate_response_match(const LuxParseResult& result,
 void ProtocolBridge::process_rs485_response() {
     if (!rs485_->is_waiting_response()) {
         // Response received
-        const LuxParseResult& rs485_result = rs485_->get_last_result();
+        const ParseResult& rs485_result = rs485_->get_last_result();
 
         unsigned long elapsed = millis() - last_request_time_;
 
@@ -293,7 +293,7 @@ void ProtocolBridge::process_rs485_response() {
     }
 }
 
-void ProtocolBridge::send_wifi_response(TCPClient* client, const LuxParseResult& rs485_result) {
+void ProtocolBridge::send_wifi_response(TCPClient* client, const ParseResult& rs485_result) {
     if (!client || !client->is_connected()) {
         LOGW(TAG, "⚠ Client disconnected, cannot send response");
         return;

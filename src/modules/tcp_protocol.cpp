@@ -25,40 +25,40 @@ uint16_t TcpProtocol::calculate_crc(const uint8_t* data, size_t length) {
 // Internal helpers to build RS485 packets from parsed TCP frames
 namespace {
 void build_rs485_write_single(TcpParseResult& result) {
-    result.rs485_packet.resize(LUX_MIN_REQUEST_SIZE);
+    result.rs485_packet.resize(MODBUS_MIN_REQUEST_SIZE);
     auto& pkt = result.rs485_packet;
 
-    pkt[LuxProtocolOffsets::ADDR] = LUX_DEVICE_ADDR_REQUEST;
-    pkt[LuxProtocolOffsets::FUNC] = static_cast<uint8_t>(LuxFunctionCode::WRITE_SINGLE);
-    memcpy(&pkt[LuxProtocolOffsets::SERIAL_NUM], result.inverter_serial,
+    pkt[InverterProtocolOffsets::ADDR] = MODBUS_DEVICE_ADDR_REQUEST;
+    pkt[InverterProtocolOffsets::FUNC] = static_cast<uint8_t>(ModbusFunctionCode::WRITE_SINGLE);
+    memcpy(&pkt[InverterProtocolOffsets::SERIAL_NUM], result.inverter_serial,
            TCP_PROTO_DONGLE_SERIAL_LEN);
-    TcpProtocol::write_little_endian_uint16(&pkt[0], LuxProtocolOffsets::START_REG,
+    TcpProtocol::write_little_endian_uint16(&pkt[0], InverterProtocolOffsets::START_REG,
                                             result.start_register);
-    TcpProtocol::write_little_endian_uint16(&pkt[0], LuxProtocolOffsets::COUNT_OR_VALUE,
+    TcpProtocol::write_little_endian_uint16(&pkt[0], InverterProtocolOffsets::COUNT_OR_VALUE,
                                             result.write_values[0]);
 
-    uint16_t crc = TcpProtocol::calculate_crc(&pkt[0], LuxProtocolOffsets::CRC_MIN_PACKET);
-    TcpProtocol::write_little_endian_uint16(&pkt[0], LuxProtocolOffsets::CRC_MIN_PACKET, crc);
+    uint16_t crc = TcpProtocol::calculate_crc(&pkt[0], InverterProtocolOffsets::CRC_MIN_PACKET);
+    TcpProtocol::write_little_endian_uint16(&pkt[0], InverterProtocolOffsets::CRC_MIN_PACKET, crc);
 }
 
 void build_rs485_write_multi(TcpParseResult& result) {
-    size_t rs485_size = LuxProtocolOffsets::DATA_START + (result.register_count * 2) + 2;
+    size_t rs485_size = InverterProtocolOffsets::DATA_START + (result.register_count * 2) + 2;
     result.rs485_packet.resize(rs485_size);
     auto& pkt = result.rs485_packet;
 
-    pkt[LuxProtocolOffsets::ADDR] = LUX_DEVICE_ADDR_REQUEST;
-    pkt[LuxProtocolOffsets::FUNC] = static_cast<uint8_t>(LuxFunctionCode::WRITE_MULTI);
-    memcpy(&pkt[LuxProtocolOffsets::SERIAL_NUM], result.inverter_serial,
+    pkt[InverterProtocolOffsets::ADDR] = MODBUS_DEVICE_ADDR_REQUEST;
+    pkt[InverterProtocolOffsets::FUNC] = static_cast<uint8_t>(ModbusFunctionCode::WRITE_MULTI);
+    memcpy(&pkt[InverterProtocolOffsets::SERIAL_NUM], result.inverter_serial,
            TCP_PROTO_DONGLE_SERIAL_LEN);
-    TcpProtocol::write_little_endian_uint16(&pkt[0], LuxProtocolOffsets::START_REG,
+    TcpProtocol::write_little_endian_uint16(&pkt[0], InverterProtocolOffsets::START_REG,
                                             result.start_register);
-    TcpProtocol::write_little_endian_uint16(&pkt[0], LuxProtocolOffsets::COUNT_OR_VALUE,
+    TcpProtocol::write_little_endian_uint16(&pkt[0], InverterProtocolOffsets::COUNT_OR_VALUE,
                                             result.register_count);
-    pkt[LuxProtocolOffsets::BYTE_COUNT] = result.register_count * 2;
+    pkt[InverterProtocolOffsets::BYTE_COUNT] = result.register_count * 2;
 
     for (size_t i = 0; i < result.write_values.size(); i++) {
-        TcpProtocol::write_little_endian_uint16(&pkt[0], LuxProtocolOffsets::DATA_START + (i * 2),
-                                                result.write_values[i]);
+        TcpProtocol::write_little_endian_uint16(
+            &pkt[0], InverterProtocolOffsets::DATA_START + (i * 2), result.write_values[i]);
     }
 
     uint16_t crc = TcpProtocol::calculate_crc(&pkt[0], rs485_size - 2);
@@ -66,20 +66,20 @@ void build_rs485_write_multi(TcpParseResult& result) {
 }
 
 void build_rs485_read(TcpParseResult& result) {
-    result.rs485_packet.resize(LUX_MIN_REQUEST_SIZE);
+    result.rs485_packet.resize(MODBUS_MIN_REQUEST_SIZE);
     auto& pkt = result.rs485_packet;
 
-    pkt[LuxProtocolOffsets::ADDR] = LUX_DEVICE_ADDR_REQUEST;
-    pkt[LuxProtocolOffsets::FUNC] = result.function_code;
-    memcpy(&pkt[LuxProtocolOffsets::SERIAL_NUM], result.inverter_serial,
+    pkt[InverterProtocolOffsets::ADDR] = MODBUS_DEVICE_ADDR_REQUEST;
+    pkt[InverterProtocolOffsets::FUNC] = result.function_code;
+    memcpy(&pkt[InverterProtocolOffsets::SERIAL_NUM], result.inverter_serial,
            TCP_PROTO_DONGLE_SERIAL_LEN);
-    TcpProtocol::write_little_endian_uint16(&pkt[0], LuxProtocolOffsets::START_REG,
+    TcpProtocol::write_little_endian_uint16(&pkt[0], InverterProtocolOffsets::START_REG,
                                             result.start_register);
-    TcpProtocol::write_little_endian_uint16(&pkt[0], LuxProtocolOffsets::COUNT_OR_VALUE,
+    TcpProtocol::write_little_endian_uint16(&pkt[0], InverterProtocolOffsets::COUNT_OR_VALUE,
                                             result.register_count);
 
-    uint16_t crc = TcpProtocol::calculate_crc(&pkt[0], LuxProtocolOffsets::CRC_MIN_PACKET);
-    TcpProtocol::write_little_endian_uint16(&pkt[0], LuxProtocolOffsets::CRC_MIN_PACKET, crc);
+    uint16_t crc = TcpProtocol::calculate_crc(&pkt[0], InverterProtocolOffsets::CRC_MIN_PACKET);
+    TcpProtocol::write_little_endian_uint16(&pkt[0], InverterProtocolOffsets::CRC_MIN_PACKET, crc);
 }
 } // namespace
 
@@ -269,11 +269,12 @@ bool TcpProtocol::build_response(std::vector<uint8_t>& wifi_packet, const uint8_
     // [...] crc Exception: [0] addr, [1] func|0x80, [2-11] serial, [12-13] reg, [14]
     // exception_code, [15-16] crc
 
-    uint16_t start_reg = parse_little_endian_uint16(rs485_response, LuxProtocolOffsets::START_REG);
-    uint8_t byte_count = is_exception ? 0 : rs485_response[LuxProtocolOffsets::COUNT_OR_VALUE];
+    uint16_t start_reg =
+        parse_little_endian_uint16(rs485_response, InverterProtocolOffsets::START_REG);
+    uint8_t byte_count = is_exception ? 0 : rs485_response[InverterProtocolOffsets::COUNT_OR_VALUE];
 
     if (is_exception) {
-        uint8_t exception_code = rs485_response[LuxProtocolOffsets::EXCEPTION_CODE];
+        uint8_t exception_code = rs485_response[InverterProtocolOffsets::EXCEPTION_CODE];
         LOGW(TAG, "Building TCP exception: func=0x%02X reg=%d code=0x%02X", func, start_reg,
              exception_code);
     }
@@ -329,7 +330,7 @@ bool TcpProtocol::build_response(std::vector<uint8_t>& wifi_packet, const uint8_
     wifi_packet.resize(offset);
 
     if (is_exception) {
-        uint8_t exception_code = rs485_response[LuxProtocolOffsets::EXCEPTION_CODE];
+        uint8_t exception_code = rs485_response[InverterProtocolOffsets::EXCEPTION_CODE];
         LOGI(TAG, "✓ TCP exception resp: func=0x%02X reg=%d code=0x%02X size=%d", func, start_reg,
              exception_code, wifi_packet.size());
     } else {

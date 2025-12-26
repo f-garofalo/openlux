@@ -28,7 +28,7 @@ TCPServer::~TCPServer() {
 void TCPServer::begin(uint16_t port, size_t max_clients) {
     // Prevent double initialization
     if (server_ != nullptr) {
-        LOGW(TAG, "TCP Server already initialized, skipping");
+        LOGI(TAG, "TCP Server already initialized, skipping");
         return;
     }
 
@@ -57,16 +57,41 @@ void TCPServer::loop() {
     // Check for client timeouts (FIRST, before processing data)
     check_client_timeouts();
 
-    // Process any pending data from clients (AFTER timeout check)
+    // Process any pending data from clients (skip marked for removal)
     for (auto& tcp_client : clients_) {
-        // Safety check: skip if client is null or disconnected
-        if (!tcp_client.client || !tcp_client.client->connected()) {
-            LOGD(TAG, "Skipping disconnected client in loop");
+        // Safety check: skip if client is null, disconnected, or pending removal
+        if (!tcp_client.client || !tcp_client.client->connected() || tcp_client.pending_removal) {
             continue;
         }
 
         if (!tcp_client.rx_buffer.empty()) {
             process_client_data(&tcp_client);
+        }
+    }
+
+    // SAFELY remove clients marked for removal (after all callbacks have returned)
+    cleanup_pending_clients();
+}
+
+void TCPServer::cleanup_pending_clients() {
+    auto it = clients_.begin();
+    while (it != clients_.end()) {
+        if (it->pending_removal) {
+            LOGI(TAG, "Cleaning up client: %s:%d", it->remote_ip.c_str(), it->remote_port);
+
+            // Destroy client using consistent method
+            if (it->client) {
+                destroy_client(it->client);
+            }
+
+            // Clear the vector element
+            it->client = nullptr;
+            it = clients_.erase(it);
+
+
+            LOGI(TAG, "Client removed (remaining: %d)", clients_.size());
+        } else {
+            ++it;
         }
     }
 }
@@ -84,6 +109,9 @@ void TCPServer::stop() {
             destroy_client(tcp_client.client);
         }
         tcp_client.client = nullptr;
+        tcp_client.rx_buffer.clear();
+        tcp_client.rx_buffer.shrink_to_fit();
+        tcp_client.remote_ip = "";
     }
     clients_.clear();
 
@@ -175,6 +203,9 @@ void TCPServer::disconnect_all_clients() {
             destroy_client(tcp_client.client);
         }
         tcp_client.client = nullptr;
+        tcp_client.rx_buffer.clear();
+        tcp_client.rx_buffer.shrink_to_fit();
+        tcp_client.remote_ip = "";
     }
     clients_.clear();
 }
@@ -213,12 +244,23 @@ void TCPServer::handle_client_data(void* arg, AsyncClient* client, void* data, s
     TCPClient* tcp_client = server->find_client(client);
 
     if (!tcp_client) {
-        LOGW(TAG, "Received data from unknown client (might be during cleanup)");
+        LOGW(TAG, "Received %d bytes from unknown client (already removed)", len);
+        return;
+    }
+
+    // Skip if client is pending removal or disconnected
+    if (tcp_client->pending_removal) {
+        LOGW(TAG, "Ignoring %d bytes from client %s pending removal", len,
+             tcp_client->remote_ip.c_str());
         return;
     }
 
     if (!client || !client->connected()) {
-        LOGW(TAG, "Received data from disconnected client");
+        uint8_t* bytes = static_cast<uint8_t*>(data);
+        LOGW(TAG, "Received %d bytes from disconnected client %s:", len,
+             tcp_client->remote_ip.c_str());
+        LOGW(TAG, "   Data: %s", TcpProtocol::format_hex(bytes, len).c_str());
+        tcp_client->pending_removal = true; // Mark for cleanup
         return;
     }
 
@@ -289,18 +331,20 @@ void TCPServer::remove_client(AsyncClient* client) {
                            [client](const TCPClient& c) { return c.client == client; });
 
     if (it != clients_.end()) {
-        LOGI(TAG, "Client disconnected: %s:%d", it->remote_ip.c_str(), it->remote_port);
+        if (!it->pending_removal) {
+            LOGI(TAG, "Marking client for removal: %s:%d", it->remote_ip.c_str(), it->remote_port);
+            it->pending_removal = true;
 
-        AsyncClient* async_client = it->client;
-        it->client = nullptr;
-        clients_.erase(it);
-
-        destroy_client(async_client);
-
-        LOGI(TAG, "Client removed (remaining: %d)", clients_.size());
+            // Clear callbacks immediately to prevent further calls
+            if (it->client) {
+                it->client->onData(nullptr, nullptr);
+                it->client->onError(nullptr, nullptr);
+                it->client->onDisconnect(nullptr, nullptr);
+                it->client->onTimeout(nullptr, nullptr);
+            }
+        }
     } else {
-        LOGD(TAG, "Client disconnected (already removed)");
-        destroy_client(client);
+        LOGD(TAG, "Client not found in list (already removed or never added)");
     }
 }
 
@@ -309,12 +353,19 @@ void TCPServer::destroy_client(AsyncClient* client) {
         return;
     }
 
+    // Clear all callbacks first to prevent them from being called during cleanup
+    client->onData(nullptr, nullptr);
+    client->onError(nullptr, nullptr);
+    client->onDisconnect(nullptr, nullptr);
+    client->onTimeout(nullptr, nullptr);
+
     if (client->connected()) {
-        client->close(true);
+        client->close();
     }
 
     client->free();
-    delete client;
+
+    delete client; // NOLINT(cppcoreguidelines-owning-memory) - AsyncClient requires manual cleanup
 }
 
 TCPClient* TCPServer::find_client(const AsyncClient* client) {
@@ -379,9 +430,9 @@ void TCPServer::check_client_timeouts() {
 
             // Remove from list FIRST to avoid reentrancy issues if close() triggers callbacks
             // immediately
-            it->client = nullptr;
             it = clients_.erase(it);
 
+            // Use consistent destroy method
             destroy_client(c);
 
             LOGI(TAG, "Client removed due to timeout (remaining: %d)", clients_.size());

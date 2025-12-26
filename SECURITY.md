@@ -108,7 +108,7 @@ OpenLux is a community project with inherent limitations:
 
 OpenLux uses the following dependencies:
 
-- `esphome/AsyncTCP-esphome` - Async TCP library
+- `ESP32Async/AsyncTCP` - Async TCP library
 - `tzapu/WiFiManager` - WiFi configuration portal
 - ESP32 Arduino Core libraries
 

@@ -5,7 +5,7 @@
 @author OpenLux Contributors
 -->
 
-# Hardware Guide (ESP32 ↔ RS485 ↔ Luxpower)
+# Hardware Guide (ESP32 ↔ RS485 ↔ Solar Inverter)
 
 > This project is independent and not endorsed by Luxpower/LuxpowerTek; trademarks belong to their owners.
 
@@ -60,7 +60,7 @@ For inverters with RS485 on the CT port, see this wiring reference: https://gith
 
 <img src="hdmi_connector.jpg" alt="HDMI Connector" height="300px" width="450px"/>
 
-- HDMI Breakout Board for use OpenLux with official luxpower dongle (In this case no HDMI connector is needed):
+- HDMI Breakout Board for use with OpenLux alongside the official dongle (in this case, no HDMI connector is needed):
 
 <img src="hdmi_breakout_board.png" alt="HDMI Breakout Board" height="200px" width="250px"/>
 

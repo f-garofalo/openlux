@@ -18,7 +18,7 @@
 /**
  * @brief TCP Server for Home Assistant communication
  *
- * Accepts multiple client connections on port 8000 (Luxpower TCP dongle protocol)
+ * Accepts multiple client connections on port 8000 (TCP dongle protocol)
  */
 
 // Forward declaration
@@ -32,8 +32,11 @@ struct TCPClient {
     uint16_t remote_port = 0;
     std::vector<uint8_t> rx_buffer;
     uint32_t last_activity = 0;
+    bool pending_removal = false; // Mark for safe removal during loop
 
-    bool is_connected() const { return client != nullptr && client->connected(); }
+    bool is_connected() const {
+        return client != nullptr && client->connected() && !pending_removal;
+    }
 };
 
 /**
@@ -92,6 +95,7 @@ class TCPServer {
     // Internal methods
     void add_client(AsyncClient* client);
     void remove_client(AsyncClient* client);
+    void cleanup_pending_clients();
     TCPClient* find_client(const AsyncClient* client);
     void process_client_data(TCPClient* tcp_client);
     void check_client_timeouts();

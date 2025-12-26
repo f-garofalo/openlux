@@ -213,6 +213,12 @@ void CommandManager::registerCoreCommands() {
 #ifdef ENABLE_MQTT
                         msg += "MQTT ";
 #endif
+#if WIFI_ROAMING_ENABLED
+                        msg += "ROAMING ";
+#endif
+#if WIFI_FAST_CONNECT
+                        msg += "FAST_CONNECT ";
+#endif
 
 
                         msg += "\nLast Reboot: ";

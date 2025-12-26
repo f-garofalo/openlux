@@ -10,12 +10,45 @@
 #include "logger.h"
 
 #include <Esp.h>
+#include <esp_system.h>
 #include <esp_task_wdt.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#include <soc/rtc_cntl_reg.h>
+
 static const char* TAG = "sys";
 static const int WDT_TIMEOUT = 30; // 30 seconds watchdog
+
+// Helper to convert ESP32 reset reason to string
+static const char* getResetReasonString(esp_reset_reason_t reason) {
+    switch (reason) {
+        case ESP_RST_UNKNOWN:
+            return "Unknown";
+        case ESP_RST_POWERON:
+            return "Power-on";
+        case ESP_RST_EXT:
+            return "External pin";
+        case ESP_RST_SW:
+            return "Software (esp_restart)";
+        case ESP_RST_PANIC:
+            return "Exception/Panic";
+        case ESP_RST_INT_WDT:
+            return "Interrupt Watchdog";
+        case ESP_RST_TASK_WDT:
+            return "Task Watchdog";
+        case ESP_RST_WDT:
+            return "Other Watchdog";
+        case ESP_RST_DEEPSLEEP:
+            return "Deep Sleep wake";
+        case ESP_RST_BROWNOUT:
+            return "Brownout";
+        case ESP_RST_SDIO:
+            return "SDIO";
+        default:
+            return "Unknown";
+    }
+}
 
 SystemManager& SystemManager::getInstance() {
     static SystemManager instance;
@@ -25,14 +58,29 @@ SystemManager& SystemManager::getInstance() {
 void SystemManager::begin() {
     prefs_.begin("openlux", false);
 
-    // Read last reboot reason
+    // Log ESP32 hardware reset reason
+    esp_reset_reason_t reset_reason = esp_reset_reason();
+    LOGI(TAG, "ESP32 Reset Reason: %s (code: %d)", getResetReasonString(reset_reason),
+         reset_reason);
+
+    // Warn on abnormal resets
+    if (reset_reason == ESP_RST_PANIC) {
+        LOGE(TAG, "⚠ Previous boot crashed with PANIC!");
+    } else if (reset_reason == ESP_RST_TASK_WDT || reset_reason == ESP_RST_INT_WDT ||
+               reset_reason == ESP_RST_WDT) {
+        LOGE(TAG, "⚠ Previous boot had a WATCHDOG TIMEOUT!");
+    } else if (reset_reason == ESP_RST_BROWNOUT) {
+        LOGE(TAG, "⚠ Previous boot had a BROWNOUT (power issue)!");
+    }
+
+    // Read last reboot reason (our software reason)
     last_reboot_reason_ = prefs_.getString("reboot_reason", "Power On / Reset");
 
     // Clear it for next time
     prefs_.remove("reboot_reason");
     prefs_.end();
 
-    LOGI(TAG, "System initialized. Last reboot reason: %s", last_reboot_reason_.c_str());
+    LOGI(TAG, "System initialized. Last software reboot reason: %s", last_reboot_reason_.c_str());
 }
 
 void SystemManager::enableWatchdog() {

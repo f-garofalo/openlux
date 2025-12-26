@@ -14,11 +14,11 @@
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Home Assistant                           │
-│                     (lxp_modbus integration)                    │
+│                     (Modbus integration)                        │
 └────────────────────────────┬────────────────────────────────────┘
                              │ TCP (WiFi)
                              │ Port 8000
-                             │ Luxpower A1 1A Protocol
+                             │ Protocol-compatible dongle
                              │
 ┌────────────────────────────┴────────────────────────────────────┐
 │                         ESP32 OpenLux                           │
@@ -30,13 +30,13 @@
 │         ↑                                       ↓               │
 │         │                                       │ RS485         │
 │    WiFi Protocol                         Modbus-like Protocol   │
-│    (A1 1A format)                        (19200 baud)           │
+│    (inverter dongle format)              (19200 baud)           │
 └─────────────────────────────────────────────────┬───────────────┘
                                                   │
                                                   │ A/B (RS485)
                                                   │
 ┌─────────────────────────────────────────────────┴───────────────┐
-│                      Luxpower Inverter                          │
+│                      Solar Inverter                             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -44,30 +44,58 @@
 
 ```
 OpenLux ESP32 Firmware
+├── System & Coordination (src/modules/)
+│   ├── SystemManager       → Hardware operations (reboot, heap, watchdog, uptime)
+│   ├── OperationGuard      → Lock manager for blocking operations (TCP/RS485/Network/WiFi)
+│   └── CommandManager      → CLI commands via Telnet/Serial
+│
 ├── Core Services (src/modules/)
-│   ├── NetworkManager    → WiFi/Ethernet connectivity, OTA updates, mDNS
-│   ├── Logger            → Dual output (Serial + Telnet on port 23)
-│   ├── NTPManager        → Time synchronization with configurable servers
-│   ├── CommandManager    → CLI commands via Telnet/Serial (status, reboot, etc.)
-│   └── WebServerManager  → Web dashboard (port 80) with basic auth
+│   ├── NetworkManager      → WiFi/Ethernet, OTA updates, mDNS
+│   ├── Logger              → Dual output (Serial + Telnet on port 23)
+│   └── NTPManager          → Time synchronization
+│
+├── User Interface (src/modules/)
+│   ├── WebServerManager    → Web dashboard (port 80) + REST API
+│   └── MqttManager         → MQTT telemetry + Home Assistant Auto-Discovery
 │
 ├── Communication Layer (src/modules/)
-│   ├── TCPServer         → Multi-client TCP server (port 8000, max 5 clients)
-│   ├── TCPProtocol       → WiFi protocol parser/builder (A1 1A format)
-│   └── RS485Manager      → UART hardware communication (Modbus-like protocol)
+│   ├── TCPServer           → Multi-client TCP server (port 8000, max 5)
+│   ├── TCPProtocol         → WiFi protocol parser (A1 1A format)
+│   ├── RS485Manager        → UART communication (Modbus-like)
+│   └── InverterProtocol    → Inverter-specific protocol
 │
 ├── Coordination Layer (src/modules/)
-│   └── ProtocolBridge    → Bidirectional translator (WiFi ↔ RS485)
-│                           - Handles read/write operations (0x03, 0x04, 0x06, 0x10)
-│                           - CRC validation and error handling
-│                           - Serial number extraction
+│   └── ProtocolBridge      → Bidirectional translator (WiFi ↔ RS485)
 │
 └── Utilities (src/utils/)
-    ├── CRC16             → CRC16-Modbus calculator (poly 0xA001)
-    └── SerialUtils       → Serial number formatting and validation
+    ├── CRC16               → CRC16-Modbus calculator
+    └── SerialUtils         → Serial number utilities
 ```
 
 ### Module Descriptions
+
+#### System & Coordination
+
+**SystemManager** (`system_manager.h/cpp`)
+- Hardware abstraction layer for system operations
+- Watchdog management (enable/disable/feed)
+- Reboot with reason tracking (stored in NVS)
+- Diagnostics: heap, PSRAM, CPU frequency, flash size
+- Uptime tracking in seconds
+- System health checks in main loop
+
+**OperationGuard** (`operation_guard.h/cpp`)
+- RAII-based lock manager for expensive synchronous operations
+- Prevents simultaneous execution of blocking operations
+- Managed operations: TCP_CLIENT_PROCESSING, RS485_OPERATION, NETWORK_VALIDATION, WIFI_SCAN, OTA_OPERATION
+- Automatic lock release when going out of scope
+
+**CommandManager** (`command_manager.h/cpp`)
+- Interactive CLI command system via Telnet/Serial
+- Built-in commands: `status`, `reboot`, `help`, `wifi_restart`, `probe_rs485`, `mqtt_status`
+- Extensible command registration system
+- Command debouncing for critical operations
+- Status reporting (uptime, memory, network, RS485, MQTT)
 
 #### Core Services
 
@@ -95,12 +123,7 @@ OpenLux ESP32 Firmware
 - Periodic time synchronization
 - Time-based logging and operations
 
-**CommandManager** (`command_manager.h/cpp`)
-- Interactive CLI command system via Telnet/Serial
-- Built-in commands: `status`, `reboot`, `help`, `wifi_restart`, `probe_rs485`
-- Extensible command registration system
-- Command debouncing for critical operations
-- Status reporting (uptime, memory, network, RS485)
+#### User Interface
 
 **WebServerManager** (`web_server.h/cpp`)
 - HTTP server on port 80 with basic authentication
@@ -110,18 +133,32 @@ OpenLux ESP32 Firmware
   - `POST /api/cmd` - Execute CLI commands
 - Configurable credentials in `config.h`
 - HTML interface for quick troubleshooting
+- Responsive design with real-time updates
+
+**MqttManager** (`mqtt_manager.h/cpp`)
+- MQTT client for Home Assistant integration (if `ENABLE_MQTT` enabled)
+- Publishes system telemetry:
+  - Device status (Online/Offline)
+  - Uptime and last reboot reason
+  - WiFi RSSI (signal strength)
+  - IP address and hostname
+  - Free heap memory
+  - WiFi channel information
+- Home Assistant MQTT Auto-Discovery support
+- Remote command execution via MQTT topics
+- Configurable broker, topics, and credentials in `config.h`
 
 #### Communication Layer
 
 **TCPServer** (`tcp_server.h/cpp`)
-- Asynchronous TCP server on port 8000 (Luxpower dongle protocol)
+- Asynchronous TCP server on port 8000 (protocol-compatible dongle)
 - Multi-client support (up to 5 simultaneous connections)
 - Per-client timeout management (5 minutes default)
 - Connection state tracking and cleanup
 - Integration with ProtocolBridge for packet forwarding
 
 **TCPProtocol** (`tcp_protocol.h/cpp`)
-- Parser and builder for Luxpower A1 1A WiFi protocol
+- Parser and builder for WiFi protocol compatible with standard dongle format
 - Handles protocol versions (requests=2, responses=5)
 - CRC16-Modbus validation
 - Packet framing and serialization
@@ -136,6 +173,13 @@ OpenLux ESP32 Firmware
 - Timeout and retry logic
 - Frame validation with CRC checking
 - Inverter serial number detection and probing
+
+**InverterProtocol** (`inverter_protocol.h/cpp`)
+- Inverter-specific protocol implementation
+- Packet structure handling and validation
+- Register-level operations (read/write)
+- Inverter-specific frame formatting
+- Device identification and probing logic
 
 #### Coordination Layer
 
@@ -166,7 +210,7 @@ OpenLux ESP32 Firmware
 
 ### High-Level Operation
 
-OpenLux acts as a transparent bridge between Home Assistant and the Luxpower inverter:
+OpenLux acts as a transparent bridge between Home Assistant and your solar inverter:
 
 1. **TCP Connection**: Home Assistant connects to OpenLux on port 8000
 2. **Request Reception**: TCPServer receives requests from Home Assistant
@@ -195,7 +239,7 @@ All packets are validated with CRC16-Modbus checksums on both sides.
 
 ### Implementation Notes
 
-**Protocol Details**: The specific packet structures and protocol specifications are based on community reverse-engineering efforts and are kept in internal documentation to respect intellectual property concerns. The implementation follows standard Modbus RTU principles adapted for Luxpower equipment.
+**Protocol Details**: The specific packet structures and protocol specifications are based on community reverse-engineering efforts and are kept in internal documentation to respect intellectual property concerns. The implementation follows standard Modbus RTU principles adapted for solar inverter equipment.
 
 **References**:
 - Community projects: [lxp-bridge](https://github.com/celsworth/lxp-bridge), [LuxPower HA Integration](https://github.com/ant0nkr/luxpower-ha-integration)
@@ -217,9 +261,16 @@ All user-configurable settings are in `src/config.h`:
 - `TCP_MAX_CLIENTS` - Maximum simultaneous clients (default: 5)
 - `WEB_DASH_PORT` - Web dashboard port (default: 80)
 
+**MQTT Settings** (if `ENABLE_MQTT` enabled):
+- `MQTT_BROKER` - MQTT broker IP/hostname
+- `MQTT_PORT` - MQTT broker port (default: 1883)
+- `MQTT_USERNAME` / `MQTT_PASSWORD` - MQTT credentials
+- `MQTT_DISCOVERY_PREFIX` - Home Assistant MQTT discovery prefix (default: "homeassistant")
+- `MQTT_TOPIC_PREFIX` - Topic prefix for device topics (default: "openlux")
+
 **Hardware Configuration:**
 - `RS485_TX_PIN`, `RS485_RX_PIN`, `RS485_DE_PIN` - UART pins
-- `RS485_BAUD_RATE` - Fixed at 19200 per Luxpower spec
+- `RS485_BAUD_RATE` - Fixed at 19200 per inverter protocol specification
 - Ethernet PHY settings (if using Ethernet)
 
 **Logging & Monitoring:**
@@ -242,6 +293,7 @@ All user-configurable settings are in `src/config.h`:
 #define ENABLE_OTA      // Wireless firmware updates
 #define ENABLE_TELNET   // Remote logging
 #define ENABLE_WEB_DASH // Web dashboard
+#define ENABLE_MQTT     // MQTT telemetry publishing
 ```
 
 ### Runtime Configuration
@@ -294,7 +346,7 @@ board = esp32dev              # Standard ESP32
 ### Dependencies
 
 Managed via PlatformIO `lib_deps`:
-- `esphome/AsyncTCP-esphome` - Async TCP library
+- `ESP32Async/AsyncTCP` - Async TCP library
 - `tzapu/WiFiManager` - WiFi captive portal
 - ESP32 Arduino Core libraries (WiFi, mDNS, OTA, etc.)
 
@@ -336,11 +388,12 @@ Available via Serial or Telnet:
 
 | Command       | Description |
 |---------------|-------------|
-| `status`      | Show system status (uptime, memory, network, RS485) |
+| `status`      | Show system status (uptime, memory, network, RS485, MQTT if enabled) |
 | `reboot`      | Restart the device |
 | `help`        | Show available commands |
 | `wifi_restart`| Restart WiFi interface |
 | `probe_rs485` | Test RS485 communication with inverter |
+| `mqtt_status` | Show MQTT connection status (if MQTT enabled) |
 
 ### Web Dashboard
 
@@ -453,6 +506,6 @@ See [SECURITY.md](../SECURITY.md) for full security policy.
 
 ---
 
-**Document Version**: 1.0.0
-**Last Updated**: December 11, 2024
+**Document Version**: 1.0.5
+**Last Updated**: December 26, 2025
 **License**: GPL-3.0

@@ -1,8 +1,8 @@
 /**
  * @file main.cpp
- * @brief OpenLux - Open Source Wi-Fi Bridge for Luxpower Inverters
+ * @brief OpenLux - Open Source Wi-Fi Bridge for Inverters
  *
- * Complete Wi-Fi Bridge emulating Luxpower Wi-Fi dongle protocol.
+ * Complete Wi-Fi Bridge emulating Wi-Fi dongle protocol.
  * Enables Home Assistant integration without proprietary hardware.
  *
  * Features:
@@ -11,7 +11,7 @@
  * - Serial logging + Telnet logging (port 23)
  * - mDNS (openlux.local)
  * - NTP time synchronization
- * - RS485 communication with Luxpower inverter
+ * - RS485 communication with inverter
  * - TCP Server (port 8000) for Home Assistant
  * - Protocol Bridge (Wi-Fi ↔ RS485 translation)
  *

@@ -49,7 +49,7 @@
 #define RS485_TX_PIN 17       ///< UART TX pin (to RS485 DI)
 #define RS485_RX_PIN 16       ///< UART RX pin (from RS485 RO)
 #define RS485_DE_PIN -1       ///< Direction control (-1 = auto/disabled, or GPIO number)
-#define RS485_BAUD_RATE 19200 ///< Fixed baud rate (per Luxpower spec)
+#define RS485_BAUD_RATE 19200 ///< Fixed baud rate (per Inverter spec)
 
 // Ethernet (adjust pins/phy for your board if OPENLUX_USE_ETHERNET=1)
 #define ETH_PHY_TYPE ETH_PHY_LAN8720
@@ -162,9 +162,9 @@
  * @brief TCP Server Settings
  *
  * The TCP server listens for Home Assistant connections on port 8000,
- * emulating the Luxpower WiFi dongle protocol.
+ * emulating the Official WiFi dongle protocol.
  */
-#define TCP_SERVER_PORT 8000         ///< Luxpower WiFi dongle port (don't change!)
+#define TCP_SERVER_PORT 8000
 #define TCP_MAX_CLIENTS 5            ///< Maximum simultaneous clients
 #define TCP_CLIENT_TIMEOUT_MS 300000 ///< Client timeout (5 minutes)
 
@@ -260,6 +260,7 @@
 #define OPENLUX_LOG_LEVEL_NTP 1
 #define OPENLUX_LOG_LEVEL_WEB 1
 #define OPENLUX_LOG_LEVEL_GUARD 1
+#define OPENLUX_LOG_LEVEL_PROTO 2
 
 /**
  * @brief Performance Tuning

@@ -3,7 +3,16 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
-- Placeholder for future changes.
+### Added
+- **InverterProtocol Module**: New dedicated inverter protocol implementation
+
+### Changed
+- **TCPServer/TCPProtocol Refactoring**: Improved protocol handling and message routing
+  - Enhanced TCP server stability and client management
+  - Improved TCP protocol message framing and parsing
+
+### Fixed
+- **Dual Dongle Mode Stability**: Improved handling of multi-master RS485 traffic
 
 ## [1.0.5] - 2025-12-24
 ### Added
@@ -48,8 +57,9 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0] - 2025-12-11
 ### Added
-- Initial public release of OpenLux firmware (ESP32-based Luxpower/EG4 bridge).
-- TCP bridge on port 8000 (Luxpower dongle protocol), multi-client support.
+- Initial public release of OpenLux firmware (ESP32-based WiFi bridge).
+- TCP bridge on port 8000 (protocol dongle), multi-client support.
+- RS485 communication with protocol translation.
 - RS485 manager with read/write registers, protocol bridge, and command engine.
 - Minimal web dashboard on port 80 with status and command runner (basic auth).
 - Telnet logging on port 23; NTP/time sync; configurable Ethernet/WiFi.

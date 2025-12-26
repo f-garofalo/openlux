@@ -13,9 +13,9 @@
 #include <vector>
 
 /**
- * @brief Luxpower TCP Protocol (A1 1A format)
+ * @brief TCP Protocol (A1 1A format)
  *
- * Protocol used by Luxpower dongle for TCP communication (port 8000).
+ * Protocol used by dongle for TCP communication (port 8000).
  * This wraps the RS485 Modbus-like protocol in a TCP packet.
  *
  * Works over any TCP/IP transport:

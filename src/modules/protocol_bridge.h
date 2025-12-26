@@ -19,7 +19,7 @@
  *
  * Handles the translation between:
  * - TCP Protocol (A1 1A format) from Home Assistant via TCP
- * - RS485 Protocol (Modbus-like) to/from Luxpower Inverter
+ * - RS485 Protocol (Modbus-like) to/from Inverter
  */
 
 struct BridgeRequest {
@@ -60,9 +60,8 @@ class ProtocolBridge {
     ProtocolBridge& operator=(const ProtocolBridge&) = delete;
 
     void process_rs485_response();
-    static bool validate_response_match(const LuxParseResult& result,
-                                        const TcpParseResult& request);
-    void send_wifi_response(TCPClient* client, const LuxParseResult& rs485_result);
+    static bool validate_response_match(const ParseResult& result, const TcpParseResult& request);
+    void send_wifi_response(TCPClient* client, const ParseResult& rs485_result);
     void send_error_response(TCPClient* client, const String& error);
 
     TCPServer* tcp_server_ = nullptr;

@@ -48,7 +48,7 @@ void Logger::begin(uint32_t baud_rate) {
     Serial.println();
     Serial.println("================================================");
     Serial.printf("         %s v%s            \n", FIRMWARE_NAME, FIRMWARE_VERSION);
-    Serial.println("      Open Source Luxpower WiFi Dongle         ");
+    Serial.println("      Open Source Inverter WiFi Dongle         ");
     Serial.println("================================================");
     Serial.println();
 }
