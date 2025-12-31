@@ -792,6 +792,6 @@ void NetworkManager::logHeapStatus(const char* context) {
     const uint32_t min_heap = sys.getMinFreeHeap();
     const uint32_t max_alloc = sys.getMaxAllocHeap();
     const bool ok = heap_caps_check_integrity_all(true);
-    LOGE(TAG, "heap(%s): free=%u min=%u max_alloc=%u integrity=%s", context, free_heap, min_heap,
+    LOGD(TAG, "heap(%s): free=%u min=%u max_alloc=%u integrity=%s", context, free_heap, min_heap,
          max_alloc, ok ? "OK" : "FAIL");
 }

@@ -13,6 +13,7 @@
 
 #include "../config.h"
 #include "logger.h"
+#include "protocol_bridge.h"
 #include "utils/serial_utils.h"
 
 #include <algorithm>
@@ -41,6 +42,10 @@ const char* RS485Manager::function_code_to_string(ModbusFunctionCode func) {
         default:
             return "UNKNOWN";
     }
+}
+
+bool RS485Manager::is_bus_busy() const {
+    return millis() < bus_busy_until_ms_;
 }
 
 void RS485Manager::begin(HardwareSerial& serial, int8_t tx_pin, int8_t rx_pin, int8_t de_pin,
@@ -120,6 +125,15 @@ void RS485Manager::loop() {
     if (!initialized_)
         return;
 
+    // ========== RS485_BUS_BUSY CHECK ==========
+    // If bus is busy (external traffic detected), don't process anything
+    if (is_bus_busy()) {
+        LOGD(TAG, "RS485_BUS_BUSY: Skipping processing (%lums remaining)",
+             bus_busy_until_ms_ - millis());
+        return;
+    }
+    // ========== END BUS BUSY CHECK ==========
+
     // Auto-probe when link is down
     if (!inverter_link_ok_ && !serial_probe_pending_ && !waiting_response_ &&
         millis() >= next_serial_probe_ms_) {
@@ -140,6 +154,15 @@ void RS485Manager::loop() {
 // ============================================================================
 
 bool RS485Manager::send_read_request(ModbusFunctionCode func, uint16_t start_reg, uint16_t count) {
+    // ========== BUS BUSY CHECK ==========
+    // If external device is using the bus, wait for it to finish
+    if (is_bus_busy()) {
+        LOGI(TAG, "Cannot send request now: RS485_BUS_BUSY for %lums (external device active)",
+             bus_busy_until_ms_ - millis());
+        return false;
+    }
+    // ========== END BUS BUSY CHECK ==========
+
     if (!initialized_ || waiting_response_) {
         LOGW(TAG, "Cannot send request: %s",
              !initialized_ ? "not initialized" : "waiting for response");
@@ -167,6 +190,16 @@ bool RS485Manager::send_read_request(ModbusFunctionCode func, uint16_t start_reg
 }
 
 bool RS485Manager::send_write_request(uint16_t start_reg, const std::vector<uint16_t>& values) {
+    // ========== BUS BUSY CHECK ==========
+    // If external device is using the bus, wait for it to finish
+    if (is_bus_busy()) {
+        LOGW(TAG,
+             "⚠ Cannot send write request now: RS485_BUS_BUSY for %lums (external device active)",
+             bus_busy_until_ms_ - millis());
+        return false;
+    }
+    // ========== END BUS BUSY CHECK ==========
+
     if (!initialized_ || waiting_response_) {
         LOGW(TAG, "Cannot send request: %s",
              !initialized_ ? "not initialized" : "waiting for response");
@@ -240,7 +273,17 @@ bool RS485Manager::should_ignore_packet(const std::vector<uint8_t>& data) {
 
     // Ignore requests from another master (address 0x00)
     if (InverterProtocol::is_request(data.data(), data.size())) {
-        LOGD(TAG, "Ignoring request packet from another master");
+        if (data.size() >= 3) {
+            uint8_t addr = data[0];
+            uint8_t func = data[1];
+            LOGI(TAG, "🔍 EXTERNAL: Request detected (addr=0x%02X func=0x%02X size=%zu) | %s", addr,
+                 func, data.size(),
+                 InverterProtocol::format_hex(data.data(), min(data.size(), (size_t) 18)).c_str());
+            external_requests_detected_++;
+
+            bus_busy_until_ms_ = millis() + 1100;
+            LOGI(TAG, "⚠️ RS485_BUS_BUSY: Pausing");
+        }
         ignored_packets_++;
         return true;
     }
@@ -481,6 +524,7 @@ void RS485Manager::handle_timeout() {
     if (serial_probe_pending_) {
         handle_probe_failure("timeout");
     }
+    vTaskDelay(pdMS_TO_TICKS(10));
 }
 
 void RS485Manager::handle_probe_failure(const char* reason) {
