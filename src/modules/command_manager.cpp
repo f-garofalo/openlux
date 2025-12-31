@@ -446,4 +446,64 @@ void CommandManager::registerCoreCommands() {
                         String state = bridge.is_paused() ? "PAUSED" : "RUNNING";
                         return CommandResult{true, "Bridge state: " + state};
                     });
+
+    // ========== Cache Commands ==========
+
+    // cache_status: show fallback cache statistics
+    registerCommand("cache_status", "Show fallback cache statistics (hits, misses, size)",
+                    [](const std::vector<String>&) -> CommandResult {
+                        auto& bridge = ProtocolBridge::getInstance();
+
+                        String out;
+                        out.reserve(200);
+                        out += "Fallback Cache Status:\n";
+                        out += "  Size: ";
+                        out += String(bridge.get_cache_size());
+                        out += " / 10 entries\n";
+                        out += "  Hits: ";
+                        out += String(bridge.get_cache_hits());
+                        out += "\n  Misses: ";
+                        out += String(bridge.get_cache_misses());
+                        out += "\n  Hit Ratio: ";
+                        out += String(bridge.get_cache_hit_ratio(), 1);
+                        out += "%\n";
+                        out += "  Evictions: ";
+                        out += String(bridge.get_cache_invalidations());
+
+                        uint32_t total = bridge.get_cache_hits() + bridge.get_cache_misses();
+                        if (total == 0) {
+                            out += "\n\n[No cache activity yet]";
+                        }
+
+                        return CommandResult{true, out};
+                    });
+
+    // cache_clear: clear all cache entries
+    registerCommand("cache_clear", "Clear all fallback cache entries",
+                    [](const std::vector<String>&) -> CommandResult {
+                        auto& bridge = ProtocolBridge::getInstance();
+                        bridge.clear_fallback_cache();
+                        return CommandResult{true, "Fallback cache cleared"};
+                    });
+
+    // cache_info: show detailed cache entry info
+    registerCommand("cache_info", "Show detailed fallback cache entries",
+                    [](const std::vector<String>&) -> CommandResult {
+                        auto& bridge = ProtocolBridge::getInstance();
+
+                        size_t cache_size = bridge.get_cache_size();
+                        if (cache_size == 0) {
+                            return CommandResult{true, "Cache is empty"};
+                        }
+
+                        String out;
+                        out.reserve(cache_size * 100);
+                        out += "Cached Entries:\n";
+                        bridge.print_cache_entries([&out](const String& line) {
+                            out += line;
+                            out += "\n";
+                        });
+
+                        return CommandResult{true, out};
+                    });
 }

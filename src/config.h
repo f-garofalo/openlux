@@ -87,15 +87,6 @@
 #define NETWORK_TASK_CORE 0
 
 /**
- * @brief Log Persistence
- *
- * Number of log lines to keep in RTC memory to survive soft reboots.
- * Useful for debugging crashes.
- * Set to 0 to disable.
- */
-#define LOG_PERSISTENCE_LINES 150
-
-/**
  * @brief WiFi TX Power
  *
  * Adjust transmission power to improve stability with certain APs.
@@ -165,8 +156,8 @@
  * emulating the Official WiFi dongle protocol.
  */
 #define TCP_SERVER_PORT 8000
-#define TCP_MAX_CLIENTS 5            ///< Maximum simultaneous clients
-#define TCP_CLIENT_TIMEOUT_MS 300000 ///< Client timeout (5 minutes)
+#define TCP_MAX_CLIENTS 5                     ///< Maximum simultaneous clients
+#define TCP_CLIENT_TIMEOUT_MS (5 * 60 * 1000) ///< Client timeout (5 minutes)
 
 /**
  * @brief Web Dashboard Settings
@@ -275,6 +266,7 @@
 #define WIFI_WATCHDOG_REBOOT_DELAY_MS (10 * 60 * 1000) ///< After this downtime, reboot device
 #define WIFI_WATCHDOG_PORTAL_DELAY_MS \
     (20 * 60 * 1000) ///< After this downtime, open provisioning portal (AP) once
+
 #define RS485_PROBE_BACKOFF_BASE_MS 5000           ///< Initial backoff for RS485 probe retry
 #define RS485_PROBE_BACKOFF_MAX_MS (5 * 60 * 1000) ///< Max backoff for RS485 probe retry
 #define COMMAND_DEBOUNCE_MS 10000   ///< Debounce window for reboot/wifi_restart commands

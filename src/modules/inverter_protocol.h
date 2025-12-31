@@ -48,7 +48,7 @@ static constexpr size_t MODBUS_MIN_EXCEPTION_SIZE = 17;   // Exception response 
 static constexpr size_t MODBUS_MAX_RX_BUFFER_SIZE = 1024; // Maximum receive buffer
 
 // Timing
-static constexpr uint32_t MODBUS_RESPONSE_TIMEOUT_MS = 1000;
+static constexpr uint32_t MODBUS_RESPONSE_TIMEOUT_MS = 800;
 static constexpr uint32_t MODBUS_INTER_FRAME_DELAY_MS = 50;
 
 // ============================================================================

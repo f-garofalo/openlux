@@ -6,15 +6,18 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **InverterProtocol Module**: New dedicated inverter protocol implementation
 - **Bridge Pause/Resume Commands**: Manual maintenance mode for firmware updates
-  - Use case: Official dongle firmware update without disconnecting OpenLux
+    - Use case: Official dongle firmware update without disconnecting OpenLux
+- Fallback cache for RS485 read operations
+- External device detection and logging on RS485 bus
+- RS485_BUS_BUSY collision avoidance
+- Cache management commands (`cache_status`, `cache_clear`, `cache_info`)
 
 ### Changed
-- **TCPServer/TCPProtocol Refactoring**: Improved protocol handling and message routing
-  - Enhanced TCP server stability and client management
-  - Improved TCP protocol message framing and parsing
+- RS485 request handling now falls back to cache during bus contention
 
 ### Fixed
-- **Dual Dongle Mode Stability**: Improved handling of multi-master RS485 traffic
+- Dual dongle mode stability: eliminated cascading timeout errors
+- HomeAssistant no longer sees transient errors during RS485 collisions
 
 ## [1.0.5] - 2025-12-24
 ### Added

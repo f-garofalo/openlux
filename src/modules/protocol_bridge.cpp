@@ -169,7 +169,25 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
     }
 
     if (!sent) {
-        LOGE(TAG, "✗ Failed to send RS485 request");
+        // ========== TRY FALLBACK CACHE BEFORE ERROR ==========
+        // If send failed (e.g., due to RS485_BUS_BUSY), try to use cached response
+        LOGI(TAG, "Failed to send RS485 request, trying fallback cache...");
+
+        ReadCacheKey cache_key{parse_result.function_code, parse_result.start_register,
+                               parse_result.register_count};
+
+        std::vector<uint8_t> fallback_response;
+        if (get_fallback_response(cache_key, fallback_response)) {
+            // Cache hit! Send cached response instead of error
+            LOGI(TAG, "✓ Fallback cache HIT: %s", cache_key.format().c_str());
+            send_response_to_client(fallback_response, fallback_response.size());
+            failed_requests_++;
+            return;
+        }
+        // ========== END CACHE ATTEMPT ==========
+
+        // No cache available - send error
+        LOGE(TAG, "✗ Failed to send RS485 request (no fallback cache)");
         send_error_response(client, "RS485 send failed");
         failed_requests_++;
         return;
@@ -210,91 +228,12 @@ void ProtocolBridge::process_rs485_response() {
     if (!rs485_->is_waiting_response()) {
         // Response received
         const ParseResult& rs485_result = rs485_->get_last_result();
-
         unsigned long elapsed = millis() - last_request_time_;
 
         if (rs485_result.success) {
-            // Validate response matches request to avoid processing snooped packets
-            if (!validate_response_match(rs485_result, current_request_.wifi_request)) {
-                LOGW(TAG,
-                     "⚠ Response mismatch! Expected func=0x%02X start=%d, Got func=0x%02X start=%d",
-                     current_request_.wifi_request.function_code,
-                     current_request_.wifi_request.start_register,
-                     static_cast<uint8_t>(rs485_result.function_code), rs485_result.start_address);
-
-                send_error_response(current_request_.client, "Response mismatch (collision?)");
-                failed_requests_++;
-                waiting_rs485_response_ = false;
-                return;
-            }
-
-            // Build value summary using static buffer instead of String
-            char value_summary[128] = "";
-            if (rs485_result.register_count == 1 && !rs485_result.register_values.empty()) {
-                snprintf(value_summary, sizeof(value_summary), " val=0x%X",
-                         rs485_result.register_values[0]);
-            } else if (rs485_result.register_count > 0 && !rs485_result.register_values.empty()) {
-                char* pos = value_summary;
-                int remaining = sizeof(value_summary);
-
-                int written = snprintf(pos, remaining, " [0x%X", rs485_result.register_values[0]);
-                pos += written;
-                remaining -= written;
-
-                for (size_t i = 1; i < min((size_t) 3, rs485_result.register_values.size()); i++) {
-                    written = snprintf(pos, remaining, ", 0x%X", rs485_result.register_values[i]);
-                    pos += written;
-                    remaining -= written;
-                }
-
-                if (rs485_result.register_count > 3) {
-                    snprintf(pos, remaining, "...]");
-                } else {
-                    snprintf(pos, remaining, "]");
-                }
-            }
-
-            LOGI(TAG, "[REQ#%d] OK func=0x%02X regs=%d start=%d time=%lums%s", total_requests_,
-                 static_cast<uint8_t>(rs485_result.function_code), rs485_result.register_count,
-                 rs485_result.start_address, elapsed, value_summary);
-
-            send_wifi_response(current_request_.client, rs485_result);
-            successful_requests_++;
-            LOGI(TAG, "[REQ#%d] ✓ Completed (success: %d/%d = %.1f%%)", total_requests_,
-                 successful_requests_, total_requests_,
-                 (100.0f * successful_requests_) / total_requests_);
-
-            waiting_rs485_response_ = false;
+            handle_rs485_success(rs485_result, elapsed);
         } else {
-            // If it's a Modbus exception, validate it matches our request
-            if (rs485_result.error_message.startsWith("Modbus Exception")) {
-                if (!validate_response_match(rs485_result, current_request_.wifi_request)) {
-                    LOGW(TAG,
-                         "⚠ Exception response mismatch! Expected func=0x%02X start=%d, Got "
-                         "func=0x%02X start=%d",
-                         current_request_.wifi_request.function_code,
-                         current_request_.wifi_request.start_register,
-                         static_cast<uint8_t>(rs485_result.function_code),
-                         rs485_result.start_address);
-
-                    send_error_response(current_request_.client, "Response mismatch (collision?)");
-                    failed_requests_++;
-                    waiting_rs485_response_ = false;
-                    return;
-                }
-            }
-
-            LOGE(TAG, "✗ RS485 FAIL: %s (after %lums)", rs485_result.error_message.c_str(),
-                 elapsed);
-            const std::vector<uint8_t>& raw = rs485_->get_last_raw_response();
-            if (!raw.empty()) {
-                LOGD(TAG, "[REQ#%d] Raw RS485 resp: %s", total_requests_,
-                     TcpProtocol::format_hex(raw.data(), raw.size()).c_str());
-            }
-            send_error_response(current_request_.client, rs485_result.error_message);
-            failed_requests_++;
-            LOGE(TAG, "[REQ#%d] ✗ Failed (failures: %d/%d = %.1f%%)", total_requests_,
-                 failed_requests_, total_requests_, (100.0f * failed_requests_) / total_requests_);
+            handle_rs485_error(rs485_result, elapsed);
         }
 
         waiting_rs485_response_ = false;
@@ -328,6 +267,11 @@ void ProtocolBridge::send_wifi_response(TCPClient* client, const ParseResult& rs
         send_error_response(client, "Response build failed");
         return;
     }
+
+    // ========== CACHE FOR FALLBACK ==========
+    // Store successful response in cache for potential fallback use
+    cache_read_response(current_request_.wifi_request, wifi_response);
+    // ========== END CACHE FOR FALLBACK ==========
 
     LOGI(TAG, "WiFi response built: %d bytes", wifi_response.size());
     LOGD(TAG, "  WiFi packet (first 60 bytes): %s",
@@ -382,5 +326,275 @@ void ProtocolBridge::send_error_response(TCPClient* client, const String& error)
     LOGW(TAG, "⚠ Cannot build proper error response, closing connection");
     if (client->client) {
         client->client->close();
+    }
+}
+
+// ============================================================================
+// RS485 Response Handling
+// ============================================================================
+
+void ProtocolBridge::handle_rs485_success(const ParseResult& rs485_result, unsigned long elapsed) {
+    // Validate response matches request to avoid processing snooped packets
+    if (!validate_response_match(rs485_result, current_request_.wifi_request)) {
+        LOGW(TAG, "⚠ Response mismatch! Expected func=0x%02X start=%d, Got func=0x%02X start=%d",
+             current_request_.wifi_request.function_code,
+             current_request_.wifi_request.start_register,
+             static_cast<uint8_t>(rs485_result.function_code), rs485_result.start_address);
+
+        send_error_response(current_request_.client, "Response mismatch (collision?)");
+        failed_requests_++;
+        return;
+    }
+
+    // Build and log value summary
+    char value_summary[128] = "";
+    build_value_summary(rs485_result, value_summary, sizeof(value_summary));
+
+    LOGI(TAG, "[REQ#%d] OK func=0x%02X regs=%d start=%d time=%lums%s", total_requests_,
+         static_cast<uint8_t>(rs485_result.function_code), rs485_result.register_count,
+         rs485_result.start_address, elapsed, value_summary);
+
+    // Send response and cache it
+    send_wifi_response(current_request_.client, rs485_result);
+    successful_requests_++;
+
+    LOGI(TAG, "[REQ#%d] ✓ Completed (success: %d/%d = %.1f%%)", total_requests_,
+         successful_requests_, total_requests_, (100.0f * successful_requests_) / total_requests_);
+}
+
+void ProtocolBridge::handle_rs485_error(const ParseResult& rs485_result, unsigned long elapsed) {
+    // ========== TRY FALLBACK CACHE FIRST ==========
+    // This is critical for handling collisions/mismatches
+    // Even if response is mismatch, cache might have valid data
+    if (try_fallback_cache_on_error(rs485_result)) {
+        LOGI(TAG, "RS485 error, using FALLBACK CACHE despite any mismatch");
+        failed_requests_++;
+        return;
+    }
+    // ========== END FALLBACK ATTEMPT ==========
+
+    // If cache miss, validate exception response
+    if (rs485_result.error_message.startsWith("Modbus Exception")) {
+        if (!validate_response_match(rs485_result, current_request_.wifi_request)) {
+            LOGW(TAG,
+                 "Exception response mismatch AND no fallback cache! Expected func=0x%02X "
+                 "start=%d, Got func=0x%02X start=%d",
+                 current_request_.wifi_request.function_code,
+                 current_request_.wifi_request.start_register,
+                 static_cast<uint8_t>(rs485_result.function_code), rs485_result.start_address);
+
+            send_error_response(current_request_.client, "Response mismatch (collision?)");
+            failed_requests_++;
+            return;
+        }
+    }
+
+    // Log the error
+    LOGE(TAG, "✗ RS485 FAIL: %s (after %lums)", rs485_result.error_message.c_str(), elapsed);
+
+
+    // No fallback available - send error
+    send_error_response(current_request_.client, rs485_result.error_message);
+
+    const std::vector<uint8_t>& raw = rs485_->get_last_raw_response();
+    if (!raw.empty()) {
+        LOGD(TAG, "[REQ#%d] Raw RS485 resp: %s", total_requests_,
+             TcpProtocol::format_hex(raw.data(), raw.size()).c_str());
+    }
+
+    failed_requests_++;
+    LOGE(TAG, "[REQ#%d] ✗ Failed (failures: %d/%d = %.1f%%)", total_requests_, failed_requests_,
+         total_requests_, (100.0f * failed_requests_) / total_requests_);
+}
+
+void ProtocolBridge::build_value_summary(const ParseResult& rs485_result, char* buffer,
+                                         size_t buffer_size) {
+    if (rs485_result.register_count == 1 && !rs485_result.register_values.empty()) {
+        snprintf(buffer, buffer_size, " val=0x%X", rs485_result.register_values[0]);
+    } else if (rs485_result.register_count > 0 && !rs485_result.register_values.empty()) {
+        char* pos = buffer;
+        int remaining = buffer_size;
+
+        int written = snprintf(pos, remaining, " [0x%X", rs485_result.register_values[0]);
+        pos += written;
+        remaining -= written;
+
+        for (size_t i = 1; i < min((size_t) 3, rs485_result.register_values.size()); i++) {
+            written = snprintf(pos, remaining, ", 0x%X", rs485_result.register_values[i]);
+            pos += written;
+            remaining -= written;
+        }
+
+        if (rs485_result.register_count > 3) {
+            snprintf(pos, remaining, "...]");
+        } else {
+            snprintf(pos, remaining, "]");
+        }
+    }
+}
+
+bool ProtocolBridge::try_fallback_cache_on_error(const ParseResult& rs485_result) {
+    // Only try fallback for READ operations
+    if (current_request_.wifi_request.is_write_operation) {
+        return false;
+    }
+
+    ReadCacheKey cache_key{current_request_.wifi_request.function_code,
+                           current_request_.wifi_request.start_register,
+                           current_request_.wifi_request.register_count};
+
+    std::vector<uint8_t> fallback_response;
+    if (get_fallback_response(cache_key, fallback_response)) {
+        // Fallback cache found - use it instead of error
+        LOGI(TAG, "RS485 failed, using FALLBACK CACHE for %s", cache_key.format().c_str());
+
+        // Send cached response to client
+        send_response_to_client(fallback_response, fallback_response.size());
+        return true; // ← Success, cache was used
+    }
+
+    LOGW(TAG, "⚠ No fallback cache available for this request (%u-%u, %u)",
+         current_request_.wifi_request.function_code, current_request_.wifi_request.start_register,
+         current_request_.wifi_request.register_count);
+    return false; // ← Failed, no cache available
+}
+
+// ============================================================================
+// Fallback Cache Implementation
+// ============================================================================
+
+void ProtocolBridge::cache_read_response(const TcpParseResult& request,
+                                         const std::vector<uint8_t>& tcp_response) {
+    // Only cache READ operations (not WRITE)
+    if (request.is_write_operation) {
+        return;
+    }
+
+    ReadCacheKey cache_key{request.function_code, request.start_register, request.register_count};
+
+    cache_response_for_fallback(cache_key, tcp_response);
+}
+
+void ProtocolBridge::cache_response_for_fallback(const ReadCacheKey& key,
+                                                 const std::vector<uint8_t>& tcp_response) {
+    // First, check if this key already exists and remove it (to replace with fresh response)
+    auto existing = fallback_cache_.find(key);
+    if (existing != fallback_cache_.end()) {
+        LOGD(TAG, "Replacing existing cache entry: %s", key.format().c_str());
+        fallback_cache_.erase(existing);
+    }
+
+    evict_oldest_cache_entry();
+
+    // Store new entry with fresh timestamp
+    ReadCacheEntry entry;
+    entry.key = key;
+    entry.tcp_response_packet = tcp_response;
+    entry.timestamp_ms = millis();
+    entry.last_access_ms = millis();
+    entry.hit_count = 0;
+
+    fallback_cache_[key] = entry;
+
+    LOGD(TAG, "Fallback cache: stored %s (size=%zu/5)", key.format().c_str(),
+         fallback_cache_.size());
+}
+
+void ProtocolBridge::evict_oldest_cache_entry() {
+    if (fallback_cache_.empty()) {
+        return;
+    }
+
+    uint32_t now_ms = millis();
+    static constexpr uint32_t MAX_CACHE_AGE_MS = 10 * 60 * 1000;
+
+    // First pass: Remove entries older (TTL-based)
+    for (auto it = fallback_cache_.begin(); it != fallback_cache_.end();) {
+        if (it->second.get_age(now_ms) > MAX_CACHE_AGE_MS) {
+            LOGD(TAG, "Evicting stale cache entry: %s (age=%lums)", it->first.format().c_str(),
+                 it->second.get_age(now_ms));
+            it = fallback_cache_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // Second pass: If still full, remove oldest entry by timestamp
+    if (fallback_cache_.size() >= MAX_CACHE_ENTRIES) {
+        auto oldest = fallback_cache_.begin();
+        for (auto it = fallback_cache_.begin(); it != fallback_cache_.end(); ++it) {
+            if (it->second.is_older_than(oldest->second)) {
+                oldest = it;
+            }
+        }
+
+        LOGD(TAG, "Fallback cache full, evicting oldest: %s (age=%lums)",
+             oldest->first.format().c_str(), oldest->second.get_age(now_ms));
+        fallback_cache_.erase(oldest);
+    }
+}
+
+void ProtocolBridge::print_cache_entries(std::function<void(const String&)> callback) const {
+    if (fallback_cache_.empty()) {
+        callback(String("  [empty]"));
+        return;
+    }
+
+    uint32_t now_ms = millis();
+    int index = 1;
+
+    for (const auto& entry : fallback_cache_) {
+        String line;
+        line.reserve(150);
+
+        line += "  [";
+        line += index++;
+        line += "] ";
+        line += entry.first.format();
+        line += " | ";
+        line += "packet=";
+        line += entry.second.tcp_response_packet.size();
+        line += "B age=";
+        line += entry.second.get_age(now_ms);
+        line += "ms hits=";
+        line += entry.second.hit_count;
+
+        callback(line);
+    }
+}
+
+bool ProtocolBridge::get_fallback_response(const ReadCacheKey& key,
+                                           std::vector<uint8_t>& out_response) {
+    auto it = fallback_cache_.find(key);
+
+    if (it == fallback_cache_.end()) {
+        return false; // Not in cache
+    }
+
+    // Found - return it
+    ReadCacheEntry& entry = it->second;
+    out_response = entry.tcp_response_packet;
+    entry.increment_hit_count();
+    entry.update_access_time();
+
+    LOGI(TAG, "Fallback cache HIT: %s (hits=%u, age=%lums)", key.format().c_str(), entry.hit_count,
+         entry.get_age(millis()));
+
+    return true;
+}
+
+void ProtocolBridge::send_response_to_client(const std::vector<uint8_t>& response,
+                                             size_t response_size) {
+    if (!current_request_.client || !current_request_.client->is_connected()) {
+        LOGW(TAG, "⚠ Client disconnected, cannot send response");
+        return;
+    }
+
+    if (current_request_.client->client) {
+        size_t written = current_request_.client->client->write(
+            reinterpret_cast<const char*>(response.data()), response_size);
+        LOGI(TAG, "✓ Response sent to client: %u bytes", written);
+    } else {
+        LOGE(TAG, "✗ Client pointer is null!");
     }
 }
