@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+- Placeholder for future changes.
+
+## [1.0.6] - 2025-12-31
 ### Added
 - **InverterProtocol Module**: New dedicated inverter protocol implementation
 - **Bridge Pause/Resume Commands**: Manual maintenance mode for firmware updates
