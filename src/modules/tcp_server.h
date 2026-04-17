@@ -70,6 +70,13 @@ class TCPServer {
     bool send_to_client(size_t client_id, const uint8_t* data, size_t length);
     bool send_to_all_clients(const uint8_t* data, size_t length);
 
+    // Look up a live TCPClient by its AsyncClient handle. Returns nullptr if
+    // the client has disconnected or been removed. The AsyncClient* is a
+    // stable heap handle, so it's safe to keep across loop iterations — but
+    // the TCPClient entry itself lives in a std::vector that can move, so
+    // always resolve through this method immediately before use.
+    TCPClient* resolve_client(const AsyncClient* async_client);
+
     // Statistics
     uint32_t get_total_connections() const { return total_connections_; }
     uint32_t get_total_bytes_rx() const { return total_bytes_rx_; }
@@ -114,6 +121,12 @@ class TCPServer {
     uint32_t total_bytes_tx_ = 0;
 
     // Timeout settings
-    static constexpr uint32_t CLIENT_TIMEOUT_MS = 300000;  // 5 minutes (era 60 sec)
+    static constexpr uint32_t CLIENT_TIMEOUT_MS = 300000;  // 5 minutes idle before disconnect
     static constexpr uint32_t INTER_PACKET_DELAY_MS = 100; // 100ms between packets
+
+    // Max per-client RX buffer. A well-formed request is 38 bytes; a write_multi
+    // request with 127 registers tops out under 300 bytes. 4 KiB is ample for
+    // stacked requests yet protects against heap exhaustion from a slow-drip
+    // attacker sending unbounded bytes without a parseable frame.
+    static constexpr size_t MAX_RX_BUFFER_SIZE = 4096;
 };

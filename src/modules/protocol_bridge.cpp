@@ -46,11 +46,18 @@ void ProtocolBridge::loop() {
             } else {
                 LOGW(TAG, "Request timeout (%lu ms)", timeout_ms);
             }
-            send_error_response(current_request_.client, "Request timeout");
+            send_error_response("Request timeout");
             waiting_rs485_response_ = false;
             failed_requests_++;
         }
     }
+}
+
+TCPClient* ProtocolBridge::resolve_current_client() {
+    if (!tcp_server_ || !current_request_.client_handle) {
+        return nullptr;
+    }
+    return tcp_server_->resolve_client(current_request_.client_handle);
 }
 
 void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TCPClient* client) {
@@ -59,10 +66,26 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
         return;
     }
 
+    // Snapshot a stable handle immediately. The TCPClient* is only valid for
+    // the duration of this synchronous call; after that, the backing vector
+    // can move. We keep the AsyncClient* (heap-stable) and the IP string.
+    AsyncClient* client_handle = client ? client->client : nullptr;
+    String client_ip = client ? client->remote_ip : String("unknown");
+
+    // Helper lambda: send error using the currently-passed client pointer,
+    // which is still live within this call.
+    auto send_err = [&](const String& err) {
+        if (client && client->is_connected() && client->client) {
+            LOGW(TAG, "Error to %s: %s", client_ip.c_str(), err.c_str());
+            // Protocol error close: simplest safe action.
+            client->client->close();
+        }
+    };
+
     // Check if bridge is manually paused
     if (paused_) {
         LOGW(TAG, "Bridge paused by user, rejecting request");
-        send_error_response(client, "Bridge paused (maintenance mode)");
+        send_err("Bridge paused (maintenance mode)");
         failed_requests_++;
         return;
     }
@@ -72,13 +95,11 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
     auto& guard_mgr = OperationGuardManager::getInstance();
     if (guard_mgr.hasActiveOperation()) {
         OperationGuard::OperationType active_op = guard_mgr.getActiveOperation();
-        // if (active_op != OperationGuard::OperationType::TCP_CLIENT_PROCESSING) {
         const char* op_name = OperationGuardManager::getOperationTypeName(active_op);
         LOGW(TAG, "Bridge paused (%s), rejecting request, operation in progress: ", op_name);
-        send_error_response(client, "Bridge paused");
+        send_err("Bridge paused");
         failed_requests_++;
         return;
-        //}
     }
 
     // Acquire TCP operation guard here - this is where we actually process the request
@@ -98,7 +119,7 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
 
     if (!parse_result.success) {
         LOGE(TAG, "✗ Failed to parse WiFi request: %s", parse_result.error_message.c_str());
-        send_error_response(client, parse_result.error_message);
+        send_err(parse_result.error_message);
         failed_requests_++;
         return;
     }
@@ -134,20 +155,21 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
     }
 
     LOGI(TAG, "━━━ Request #%u: %s %s from %s ━━━", total_requests_, op_type, op_details,
-         client ? client->remote_ip.c_str() : "unknown");
+         client_ip.c_str());
     LOGD(TAG, "%sInverter SN: %s", req_tag,
          TcpProtocol::format_serial(parse_result.inverter_serial).c_str());
 
     // Check if we're already processing a request
     if (waiting_rs485_response_) {
         LOGW(TAG, "⚠ Already processing a request, rejecting");
-        send_error_response(client, "Bridge busy");
+        send_err("Bridge busy");
         failed_requests_++;
         return;
     }
 
-    // Save current request
-    current_request_.client = client;
+    // Save current request — use stable handle, not TCPClient* (vector can move)
+    current_request_.client_handle = client_handle;
+    current_request_.client_ip = client_ip;
     current_request_.wifi_request = parse_result;
     current_request_.timestamp = millis();
     current_request_.retry_count = 0;
@@ -188,7 +210,7 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
 
         // No cache available - send error
         LOGE(TAG, "✗ Failed to send RS485 request (no fallback cache)");
-        send_error_response(client, "RS485 send failed");
+        send_err("RS485 send failed");
         failed_requests_++;
         return;
     }
@@ -240,9 +262,13 @@ void ProtocolBridge::process_rs485_response() {
     }
 }
 
-void ProtocolBridge::send_wifi_response(TCPClient* client, const ParseResult& rs485_result) {
-    if (!client || !client->is_connected()) {
-        LOGW(TAG, "⚠ Client disconnected, cannot send response");
+void ProtocolBridge::send_wifi_response(const ParseResult& rs485_result) {
+    // Resolve the client fresh at the point of use. The TCPClient entry may
+    // have been removed or moved in the vector since process_wifi_request ran.
+    TCPClient* client = resolve_current_client();
+    if (!client) {
+        LOGW(TAG, "⚠ Client %s no longer connected, dropping response",
+             current_request_.client_ip.c_str());
         return;
     }
 
@@ -250,7 +276,7 @@ void ProtocolBridge::send_wifi_response(TCPClient* client, const ParseResult& rs
     const std::vector<uint8_t>& raw_response = rs485_->get_last_raw_response();
     if (raw_response.empty()) {
         LOGE(TAG, "✗ No raw RS485 response available");
-        send_error_response(client, "No RS485 response available");
+        send_error_response("No RS485 response available");
         return;
     }
 
@@ -264,7 +290,7 @@ void ProtocolBridge::send_wifi_response(TCPClient* client, const ParseResult& rs
 
     if (!built) {
         LOGE(TAG, "✗ Failed to build WiFi response");
-        send_error_response(client, "Response build failed");
+        send_error_response("Response build failed");
         return;
     }
 
@@ -278,24 +304,29 @@ void ProtocolBridge::send_wifi_response(TCPClient* client, const ParseResult& rs
          TcpProtocol::format_hex(wifi_response.data(), min(wifi_response.size(), (size_t) 60))
              .c_str());
 
-    // Send to TCP client
-    LOGI(TAG, "→ Sending to TCP client %s...", client->remote_ip.c_str());
+    // Send to TCP client — re-resolve in case something changed during the
+    // response build (unlikely but cheap to check).
+    client = resolve_current_client();
+    if (!client || !client->client) {
+        LOGW(TAG, "⚠ Client %s disconnected during response build",
+             current_request_.client_ip.c_str());
+        return;
+    }
 
-    if (client->client) {
-        size_t written = client->client->write(reinterpret_cast<const char*>(wifi_response.data()),
-                                               wifi_response.size());
-        if (written == wifi_response.size()) {
-            LOGI(TAG, "✓ Response sent successfully (%d bytes)", written);
-        } else {
-            LOGW(TAG, "⚠ Partial write: %d/%d bytes", written, wifi_response.size());
-        }
+    LOGI(TAG, "→ Sending to TCP client %s...", client->remote_ip.c_str());
+    size_t written = client->client->write(reinterpret_cast<const char*>(wifi_response.data()),
+                                           wifi_response.size());
+    if (written == wifi_response.size()) {
+        LOGI(TAG, "✓ Response sent successfully (%d bytes)", written);
     } else {
-        LOGE(TAG, "✗ Client pointer is null!");
+        LOGW(TAG, "⚠ Partial write: %d/%d bytes", written, wifi_response.size());
     }
 }
 
-void ProtocolBridge::send_error_response(TCPClient* client, const String& error) {
-    if (!client || !client->is_connected()) {
+void ProtocolBridge::send_error_response(const String& error) {
+    TCPClient* client = resolve_current_client();
+    if (!client) {
+        LOGD(TAG, "Client gone, dropping error: %s", error.c_str());
         return;
     }
 
@@ -306,7 +337,6 @@ void ProtocolBridge::send_error_response(TCPClient* client, const String& error)
 
     if (!raw_response.empty()) {
         // We have the raw exception response from inverter - forward it to client
-        // Build WiFi response packet wrapping the exception
         std::vector<uint8_t> wifi_response;
         uint8_t dongle_serial[10];
         TcpProtocol::copy_serial(dongle_serial_, dongle_serial);
@@ -314,7 +344,9 @@ void ProtocolBridge::send_error_response(TCPClient* client, const String& error)
         bool built = TcpProtocol::build_response(wifi_response, raw_response.data(),
                                                  raw_response.size(), dongle_serial);
 
-        if (built && client->client) {
+        // Re-resolve after build (cheap; handles race with cleanup).
+        client = resolve_current_client();
+        if (built && client && client->client) {
             size_t written = client->client->write(
                 reinterpret_cast<const char*>(wifi_response.data()), wifi_response.size());
             LOGI(TAG, "✓ Exception response forwarded to client (%d bytes)", written);
@@ -322,9 +354,10 @@ void ProtocolBridge::send_error_response(TCPClient* client, const String& error)
         }
     }
 
-    // Fallback: Close connection if we can't build proper response
+    // Fallback: close connection if we can't build proper response
     LOGW(TAG, "⚠ Cannot build proper error response, closing connection");
-    if (client->client) {
+    client = resolve_current_client();
+    if (client && client->client) {
         client->client->close();
     }
 }
@@ -341,7 +374,15 @@ void ProtocolBridge::handle_rs485_success(const ParseResult& rs485_result, unsig
              current_request_.wifi_request.start_register,
              static_cast<uint8_t>(rs485_result.function_code), rs485_result.start_address);
 
-        send_error_response(current_request_.client, "Response mismatch (collision?)");
+        // Fix #6: on a mismatch (typically dual-master collision), don't hard-fail.
+        // A cached read response is better than an error from HA's perspective.
+        if (try_fallback_cache_on_error(rs485_result)) {
+            LOGI(TAG, "Mismatch recovered via fallback cache");
+            failed_requests_++;
+            return;
+        }
+
+        send_error_response("Response mismatch (collision?)");
         failed_requests_++;
         return;
     }
@@ -355,7 +396,7 @@ void ProtocolBridge::handle_rs485_success(const ParseResult& rs485_result, unsig
          rs485_result.start_address, elapsed, value_summary);
 
     // Send response and cache it
-    send_wifi_response(current_request_.client, rs485_result);
+    send_wifi_response(rs485_result);
     successful_requests_++;
 
     LOGI(TAG, "[REQ#%d] ✓ Completed (success: %d/%d = %.1f%%)", total_requests_,
@@ -383,7 +424,7 @@ void ProtocolBridge::handle_rs485_error(const ParseResult& rs485_result, unsigne
                  current_request_.wifi_request.start_register,
                  static_cast<uint8_t>(rs485_result.function_code), rs485_result.start_address);
 
-            send_error_response(current_request_.client, "Response mismatch (collision?)");
+            send_error_response("Response mismatch (collision?)");
             failed_requests_++;
             return;
         }
@@ -394,7 +435,7 @@ void ProtocolBridge::handle_rs485_error(const ParseResult& rs485_result, unsigne
 
 
     // No fallback available - send error
-    send_error_response(current_request_.client, rs485_result.error_message);
+    send_error_response(rs485_result.error_message);
 
     const std::vector<uint8_t>& raw = rs485_->get_last_raw_response();
     if (!raw.empty()) {
@@ -585,16 +626,14 @@ bool ProtocolBridge::get_fallback_response(const ReadCacheKey& key,
 
 void ProtocolBridge::send_response_to_client(const std::vector<uint8_t>& response,
                                              size_t response_size) {
-    if (!current_request_.client || !current_request_.client->is_connected()) {
-        LOGW(TAG, "⚠ Client disconnected, cannot send response");
+    TCPClient* client = resolve_current_client();
+    if (!client || !client->client) {
+        LOGW(TAG, "⚠ Client %s no longer connected, dropping cached response",
+             current_request_.client_ip.c_str());
         return;
     }
 
-    if (current_request_.client->client) {
-        size_t written = current_request_.client->client->write(
-            reinterpret_cast<const char*>(response.data()), response_size);
-        LOGI(TAG, "✓ Response sent to client: %u bytes", written);
-    } else {
-        LOGE(TAG, "✗ Client pointer is null!");
-    }
+    size_t written =
+        client->client->write(reinterpret_cast<const char*>(response.data()), response_size);
+    LOGI(TAG, "✓ Response sent to client: %u bytes", written);
 }
