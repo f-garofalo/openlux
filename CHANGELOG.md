@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - Placeholder for future changes.
 
+## [1.0.7] - 2026-04-17
+### Security
+- **TCP input hardening**: `parse_request` now validates the declared `frame_length` against the actual packet size and requires `byte_count == register_count*2` on write-multi, blocking confused-deputy parsing from malformed/malicious TCP frames.
+- **Bounds checks on response build**: `TcpProtocol::build_response` and `build_rs485_write_multi` guard against NULL/oversized input and pre-check destination bounds before every `memcpy`.
+- **DoS protection**: per-client TCP RX buffer is capped at 4 KiB (`MAX_RX_BUFFER_SIZE`); clients that exceed it are disconnected, preventing slow-drip heap exhaustion.
+
+### Fixed
+- **Latent use-after-free in ProtocolBridge**: the bridge used to cache a raw `TCPClient*` pointing into a `std::vector` that can move (on `push_back`) or be erased (on timeout). Now stores the heap-stable `AsyncClient*` handle plus an IP snapshot, and re-resolves to a live `TCPClient` via the new `TCPServer::resolve_client()` at every send point.
+- **Dual-master collision recovery**: on a response mismatch in `handle_rs485_success`, the bridge now tries the fallback cache before returning an error to Home Assistant.
+- `ReadCacheEntry::hit_count` widened from `uint8_t` to `uint32_t` (no wrap after 256 hits).
+
+### Changed
+- `rs485_manager` TX/RX log paths replace `String` concatenation with stack-buffer `snprintf`, reducing heap fragmentation on the ESP32.
+
 ## [1.0.6] - 2025-12-31
 ### Added
 - **InverterProtocol Module**: New dedicated inverter protocol implementation
