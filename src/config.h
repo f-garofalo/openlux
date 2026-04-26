@@ -2,7 +2,7 @@
  * @file config.h
  * @brief Main Configuration File for OpenLux WiFi Bridge
  *
- * ⭐ THIS IS THE ONLY FILE YOU NEED TO EDIT! ⭐
+ * THIS IS THE ONLY FILE YOU NEED TO EDIT!
  *
  * All user-configurable parameters are in this single file.
  * Adjust these settings, then compile and upload.
@@ -18,7 +18,7 @@
 #include "secrets.h"
 
 // ============================================================================
-// 🔧 HARDWARE CONFIGURATION
+// HARDWARE CONFIGURATION
 // ============================================================================
 
 /**
@@ -35,7 +35,7 @@
  * - DE_PIN: ESP32 GPIO → RS485 DE/RE (Direction control)
  * - RS485 A/B: Connect to inverter RS485 A/B terminals
  *
- * 📌 DE_PIN (Direction Enable):
+ *  DE_PIN (Direction Enable):
  * - Set to GPIO number if your module has DE/RE pins (most common)
  * - Set to -1 if your module has automatic direction control
  * - Some modules tie DE/RE to VCC or have internal auto-direction
@@ -60,7 +60,7 @@
 #define ETH_PHY_CLK_MODE ETH_CLOCK_GPIO17_OUT // adjust for your hardware (e.g., ETH_CLOCK_GPIO0_IN)
 
 // ============================================================================
-// 🌐 NETWORK CONFIGURATION
+// NETWORK CONFIGURATION
 // ============================================================================
 
 /**
@@ -127,7 +127,7 @@
 #define WIFI_FAST_CONNECT 0 ///< Set to 1 to disable initial scan
 
 // ============================================================================
-// 📡 MQTT CONFIGURATION
+// MQTT CONFIGURATION
 // ============================================================================
 
 /**
@@ -146,7 +146,7 @@
 #define MQTT_STATUS_INTERVAL_MS 60000         ///< MQTT status update interval (ms)
 
 // ============================================================================
-// 🛠️ SERVICE CONFIGURATION
+// SERVICE CONFIGURATION
 // ============================================================================
 
 /**
@@ -210,7 +210,7 @@
 #define TIMEZONE "CET-1CEST,M3.5.0,M10.5.0/3" ///< Timezone (Italy/Rome)
 
 // ============================================================================
-// ⚙️ SYSTEM & PERFORMANCE
+// SYSTEM & PERFORMANCE
 // ============================================================================
 
 /**
@@ -242,7 +242,7 @@
  */
 #define OPENLUX_LOG_LEVEL_MAIN 1
 #define OPENLUX_LOG_LEVEL_RS485 2
-#define OPENLUX_LOG_LEVEL_NETWORK 0
+#define OPENLUX_LOG_LEVEL_NETWORK 1
 #define OPENLUX_LOG_LEVEL_MQTT 1
 #define OPENLUX_LOG_LEVEL_BRIDGE 2
 #define OPENLUX_LOG_LEVEL_TCP 2
@@ -273,7 +273,7 @@
 #define BOOT_FAIL_RESET_THRESHOLD 5 ///< After N failed boots, clear WiFi creds and open portal
 
 // ============================================================================
-// 🚩 FEATURE FLAGS
+// FEATURE FLAGS
 // ============================================================================
 
 /**

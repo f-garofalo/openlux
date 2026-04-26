@@ -62,7 +62,7 @@ struct ReadCacheEntry {
     ReadCacheKey key;
     std::vector<uint8_t> tcp_response_packet; // WiFi response packet (A1 1A format)
     uint32_t timestamp_ms;                    // Timestamp when entry was cached
-    uint8_t hit_count;                        // Number of times used as fallback
+    uint32_t hit_count;                       // Number of times used as fallback
     uint32_t last_access_ms;                  // Timestamp of last access (for LRU)
 
     ReadCacheEntry() : timestamp_ms(0), hit_count(0), last_access_ms(0) {}
@@ -96,7 +96,13 @@ struct ReadCacheEntry {
  */
 
 struct BridgeRequest {
-    TCPClient* client = nullptr;
+    // Stable handle: AsyncClient* is heap-allocated and persists until
+    // TCPServer::destroy_client() is called. The TCPClient struct itself
+    // lives in a std::vector that may move; resolve through
+    // TCPServer::resolve_client() at the point of use instead of caching
+    // a TCPClient*.
+    AsyncClient* client_handle = nullptr;
+    String client_ip; // Snapshot for logging, even if client goes away
     TcpParseResult wifi_request;
     uint32_t timestamp = 0;
     uint8_t retry_count = 0;
@@ -152,8 +158,11 @@ class ProtocolBridge {
 
     void process_rs485_response();
     static bool validate_response_match(const ParseResult& result, const TcpParseResult& request);
-    void send_wifi_response(TCPClient* client, const ParseResult& rs485_result);
-    void send_error_response(TCPClient* client, const String& error);
+    void send_wifi_response(const ParseResult& rs485_result);
+    void send_error_response(const String& error);
+    // Resolve the current request's client handle to a live TCPClient*, or
+    // nullptr if it has been disconnected/removed in the meantime.
+    TCPClient* resolve_current_client();
 
     // ========== Fallback Cache Methods ==========
     void cache_read_response(const TcpParseResult& request,

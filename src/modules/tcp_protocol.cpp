@@ -42,7 +42,18 @@ void build_rs485_write_single(TcpParseResult& result) {
 }
 
 void build_rs485_write_multi(TcpParseResult& result) {
+    // Defense-in-depth: caller should have already validated, but guard against
+    // accidental use of this builder with an out-of-range register_count.
+    if (result.register_count == 0 || result.register_count > MODBUS_MAX_REGISTERS) {
+        LOGE(TAG, "build_rs485_write_multi: invalid register_count=%u", result.register_count);
+        return;
+    }
+
     size_t rs485_size = InverterProtocolOffsets::DATA_START + (result.register_count * 2) + 2;
+    if (rs485_size > MODBUS_MAX_RX_BUFFER_SIZE) {
+        LOGE(TAG, "build_rs485_write_multi: rs485_size=%u exceeds buffer", (unsigned) rs485_size);
+        return;
+    }
     result.rs485_packet.resize(rs485_size);
     auto& pkt = result.rs485_packet;
 
@@ -113,6 +124,17 @@ TcpParseResult TcpProtocol::parse_request(const uint8_t* data, size_t length) {
     LOGD(TAG, "Request: protocol=%d, frame_len=%d, tcp_func=%d", protocol, frame_length,
          tcp_function);
 
+    // Validate declared frame_length against actual packet size.
+    // Total packet = 6 header bytes (prefix+protocol+frame_len) + frame_length.
+    // A malformed/malicious client could declare a huge frame_length; reject before any parsing.
+    if (frame_length < TCP_PROTO_REQUEST_FRAME_LENGTH ||
+        static_cast<size_t>(6) + frame_length > length) {
+        result.error_message = "Invalid frame_length";
+        LOGW(TAG, "%s: frame_length=%u, packet length=%u", result.error_message.c_str(),
+             frame_length, (unsigned) length);
+        return result;
+    }
+
     // Check TCP function
     if (tcp_function != TCP_PROTO_FUNC_TRANSLATED) {
         result.error_message = "Unsupported TCP function";
@@ -161,7 +183,6 @@ TcpParseResult TcpProtocol::parse_request(const uint8_t* data, size_t length) {
             result.register_count =
                 parse_little_endian_uint16(data, TcpProtocolOffsets::ABS_COUNT_VALUE);
             uint8_t byte_count = data[TcpProtocolOffsets::ABS_BYTE_COUNT];
-            data_frame_size = TcpProtocolOffsets::VALUES_START + byte_count; // fixed header + data
 
             // Validate register count (max 127 for new inverters)
             if (result.register_count == 0 || result.register_count > TCP_PROTO_MAX_REGISTERS) {
@@ -170,6 +191,17 @@ TcpParseResult TcpProtocol::parse_request(const uint8_t* data, size_t length) {
                      TCP_PROTO_MAX_REGISTERS);
                 return result;
             }
+
+            // Byte_count must match register_count*2 to avoid confused-deputy parsing
+            // (trust only one of the two declared sizes)
+            if (byte_count != result.register_count * 2) {
+                result.error_message = "byte_count / register_count mismatch";
+                LOGE(TAG, "%s: byte_count=%u, expected %u", result.error_message.c_str(),
+                     byte_count, (unsigned) (result.register_count * 2));
+                return result;
+            }
+
+            data_frame_size = TcpProtocolOffsets::VALUES_START + byte_count; // fixed header + data
 
             size_t min_len = TcpProtocolOffsets::DATA_FRAME + data_frame_size;
             if (length < min_len) {
@@ -252,6 +284,17 @@ TcpParseResult TcpProtocol::parse_request(const uint8_t* data, size_t length) {
 
 bool TcpProtocol::build_response(std::vector<uint8_t>& wifi_packet, const uint8_t* rs485_response,
                                  size_t rs485_length, const uint8_t* dongle_serial) {
+    // Guard against NULL input and oversized packets before any indexing.
+    if (rs485_response == nullptr || rs485_length < 2) {
+        LOGE(TAG, "RS485 response invalid (null or <2 bytes)");
+        return false;
+    }
+    if (rs485_length > MODBUS_MAX_RX_BUFFER_SIZE) {
+        LOGE(TAG, "RS485 response too large: %u bytes (max %u)", (unsigned) rs485_length,
+             (unsigned) MODBUS_MAX_RX_BUFFER_SIZE);
+        return false;
+    }
+
     // Check if this is an exception response
     uint8_t func = rs485_response[1];
     bool is_exception = (func & 0x80) != 0;
@@ -319,6 +362,17 @@ bool TcpProtocol::build_response(std::vector<uint8_t>& wifi_packet, const uint8_
     // Data frame - Copy FULL RS485 response INCLUDING address, EXCLUDING RS485 CRC only
     // Home Assistant expects: [address][func][serial][reg][bytecount][data...]
     size_t data_frame_start = offset;
+
+    // Sanity-check destination bounds before memcpy. The vector was sized to
+    // (6 + frame_length) and frame_length = 14 + data_frame_size + 2, so
+    // offset + data_frame_size must fit; assert it explicitly to catch any
+    // future regression in the sizing math.
+    if (offset + data_frame_size + 2 > wifi_packet.size()) {
+        LOGE(TAG, "wifi_packet too small: need %u, have %u",
+             (unsigned) (offset + data_frame_size + 2), (unsigned) wifi_packet.size());
+        return false;
+    }
+
     memcpy(&wifi_packet[offset], &rs485_response[0], data_frame_size); // From [0], not [1]!
     offset += data_frame_size;
 

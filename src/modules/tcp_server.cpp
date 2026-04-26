@@ -267,6 +267,19 @@ void TCPServer::handle_client_data(void* arg, AsyncClient* client, void* data, s
     // Append data to buffer efficiently
     uint8_t* bytes = static_cast<uint8_t*>(data);
     const size_t old_size = tcp_client->rx_buffer.size();
+
+    // Enforce hard cap on buffer size to prevent heap exhaustion
+    // from a client that dribbles bytes without ever forming a valid packet.
+    if (old_size + len > MAX_RX_BUFFER_SIZE) {
+        LOGW(TAG, "Client %s exceeded RX buffer cap (%u + %u > %u), disconnecting",
+             tcp_client->remote_ip.c_str(), (unsigned) old_size, (unsigned) len,
+             (unsigned) MAX_RX_BUFFER_SIZE);
+        tcp_client->pending_removal = true;
+        tcp_client->rx_buffer.clear();
+        tcp_client->rx_buffer.shrink_to_fit();
+        return;
+    }
+
     tcp_client->rx_buffer.resize(old_size + len);
     memcpy(&tcp_client->rx_buffer[old_size], bytes, len);
     tcp_client->last_activity = millis();
@@ -366,6 +379,14 @@ void TCPServer::destroy_client(AsyncClient* client) {
     client->free();
 
     delete client; // NOLINT(cppcoreguidelines-owning-memory) - AsyncClient requires manual cleanup
+}
+
+TCPClient* TCPServer::resolve_client(const AsyncClient* async_client) {
+    TCPClient* c = find_client(async_client);
+    if (c == nullptr || c->pending_removal || !c->is_connected()) {
+        return nullptr;
+    }
+    return c;
 }
 
 TCPClient* TCPServer::find_client(const AsyncClient* client) {

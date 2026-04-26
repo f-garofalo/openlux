@@ -217,18 +217,22 @@ bool RS485Manager::send_write_request(uint16_t start_reg, const std::vector<uint
         return false;
     }
 
-    // Log write request
+    // Log write request (avoid String concat to keep the TX hot path out of the heap)
     const char* func_name = (values.size() == 1) ? "WRITE_SINGLE" : "WRITE_MULTI";
     if (values.size() == 1) {
         LOGI(TAG, "→ TX: %s reg=%d val=0x%04X (%d)", func_name, start_reg, values[0], values[0]);
     } else {
-        String preview = String("[0x") + String(values[0], HEX);
-        for (size_t i = 1; i < std::min((size_t) 3, values.size()); i++) {
-            preview += String(", 0x") + String(values[i], HEX);
+        char preview[64];
+        size_t shown = std::min((size_t) 3, values.size());
+        int n = snprintf(preview, sizeof(preview), "[0x%X", values[0]);
+        for (size_t i = 1; i < shown && n >= 0 && (size_t) n < sizeof(preview); i++) {
+            n += snprintf(preview + n, sizeof(preview) - n, ", 0x%X", values[i]);
         }
-        preview += (values.size() > 3) ? "...]" : "]";
+        if (n >= 0 && (size_t) n < sizeof(preview)) {
+            snprintf(preview + n, sizeof(preview) - n, "%s", values.size() > 3 ? "...]" : "]");
+        }
         LOGI(TAG, "→ TX: %s regs=%d-%d (%d vals) %s", func_name, start_reg,
-             start_reg + values.size() - 1, values.size(), preview.c_str());
+             start_reg + values.size() - 1, values.size(), preview);
     }
 
     expected_function_code_ =
@@ -460,22 +464,28 @@ void RS485Manager::process_response_result(const std::vector<uint8_t>& data) {
 void RS485Manager::log_successful_response() {
     const char* func_name = function_code_to_string(last_result_.function_code);
 
-    // Build value preview
-    String value_preview = "";
+    // Build value preview on the stack to avoid heap churn in the RX hot path.
+    char value_preview[80];
+    value_preview[0] = '\0';
+    const auto& vals = last_result_.register_values;
+
     if (last_result_.function_code == ModbusFunctionCode::WRITE_MULTI) {
-        value_preview = " (confirmed)";
-    } else if (last_result_.register_count == 1 && !last_result_.register_values.empty()) {
-        value_preview = String(" = 0x") + String(last_result_.register_values[0], HEX);
-    } else if (last_result_.register_count > 0 && !last_result_.register_values.empty()) {
-        value_preview = String(" = [0x") + String(last_result_.register_values[0], HEX);
-        for (size_t i = 1; i < std::min((size_t) 3, last_result_.register_values.size()); i++) {
-            value_preview += String(", 0x") + String(last_result_.register_values[i], HEX);
+        snprintf(value_preview, sizeof(value_preview), " (confirmed)");
+    } else if (last_result_.register_count == 1 && !vals.empty()) {
+        snprintf(value_preview, sizeof(value_preview), " = 0x%X", vals[0]);
+    } else if (last_result_.register_count > 0 && !vals.empty()) {
+        size_t shown = std::min((size_t) 3, vals.size());
+        int n = snprintf(value_preview, sizeof(value_preview), " = [0x%X", vals[0]);
+        for (size_t i = 1; i < shown && n >= 0 && (size_t) n < sizeof(value_preview); i++) {
+            n += snprintf(value_preview + n, sizeof(value_preview) - n, ", 0x%X", vals[i]);
         }
-        value_preview += (last_result_.register_count > 3) ? "...]" : "]";
+        if (n >= 0 && (size_t) n < sizeof(value_preview)) {
+            snprintf(value_preview + n, sizeof(value_preview) - n, "%s",
+                     last_result_.register_count > 3 ? "...]" : "]");
+        }
     }
 
-    LOGI(TAG, "← RX: %s OK | %d regs%s", func_name, last_result_.register_count,
-         value_preview.c_str());
+    LOGI(TAG, "← RX: %s OK | %d regs%s", func_name, last_result_.register_count, value_preview);
 }
 
 void RS485Manager::extract_inverter_serial(const std::vector<uint8_t>& data) {
