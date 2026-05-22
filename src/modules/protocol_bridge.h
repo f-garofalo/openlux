@@ -129,6 +129,7 @@ class ProtocolBridge {
     // Status
     bool is_ready() const { return tcp_server_ != nullptr && rs485_ != nullptr; }
     bool is_paused() const { return paused_; }
+    bool is_busy() const { return waiting_rs485_response_ || pending_rs485_send_retry_; }
     void set_pause(bool paused) { paused_ = paused; }
     uint32_t get_total_requests() const { return total_requests_; }
     uint32_t get_successful_requests() const { return successful_requests_; }
@@ -157,6 +158,10 @@ class ProtocolBridge {
     ProtocolBridge& operator=(const ProtocolBridge&) = delete;
 
     void process_rs485_response();
+    void process_pending_rs485_send();
+    bool send_current_request_to_rs485();
+    void defer_current_request_retry(const char* reason);
+    void finish_deferred_send_failure(const char* reason);
     static bool validate_response_match(const ParseResult& result, const TcpParseResult& request);
     void send_wifi_response(const ParseResult& rs485_result);
     void send_error_response(const String& error);
@@ -170,6 +175,7 @@ class ProtocolBridge {
     void cache_response_for_fallback(const ReadCacheKey& key,
                                      const std::vector<uint8_t>& tcp_response);
     bool get_fallback_response(const ReadCacheKey& key, std::vector<uint8_t>& out_response);
+    bool try_fallback_cache_for_current_request(const char* reason);
     void send_response_to_client(const std::vector<uint8_t>& response, size_t response_size);
     void evict_oldest_cache_entry();
 
@@ -185,7 +191,9 @@ class ProtocolBridge {
 
     BridgeRequest current_request_;
     bool waiting_rs485_response_ = false;
+    bool pending_rs485_send_retry_ = false;
     uint32_t last_request_time_ = 0;
+    uint32_t last_send_attempt_time_ = 0;
     bool paused_ = false;
 
     // ========== Fallback Cache ==========
@@ -203,4 +211,7 @@ class ProtocolBridge {
     uint32_t failed_requests_ = 0;
 
     static constexpr uint32_t REQUEST_TIMEOUT_MS = 2000;
+    static constexpr uint32_t RS485_SEND_RETRY_DELAY_MS = 120;
+    static constexpr uint32_t RS485_SEND_RETRY_WINDOW_MS = 1600;
+    static constexpr uint8_t RS485_SEND_MAX_RETRIES = 14;
 };

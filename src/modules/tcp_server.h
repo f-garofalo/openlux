@@ -61,6 +61,10 @@ class TCPServer {
     size_t get_client_count() const { return clients_.size(); }
     uint16_t get_port() const { return port_; }
     bool is_accepting_connections() const { return accepting_connections_; }
+    uint32_t get_listener_restart_count() const { return listener_restart_count_; }
+    uint32_t get_listener_health_failures() const { return listener_health_failures_; }
+    uint32_t get_listener_health_checks() const { return listener_health_checks_; }
+    uint32_t get_listener_health_successes() const { return listener_health_successes_; }
 
     // Connection control
     void accept_connections();
@@ -106,6 +110,10 @@ class TCPServer {
     TCPClient* find_client(const AsyncClient* client);
     void process_client_data(TCPClient* tcp_client);
     void check_client_timeouts();
+    void check_listener_health();
+    bool run_listener_self_probe();
+    bool is_self_probe_client(const AsyncClient* client) const;
+    void restart_listener(const char* reason);
     void destroy_client(AsyncClient* client);
 
     AsyncServer* server_ = nullptr;
@@ -119,10 +127,20 @@ class TCPServer {
     uint32_t total_connections_ = 0;
     uint32_t total_bytes_rx_ = 0;
     uint32_t total_bytes_tx_ = 0;
+    uint32_t listener_restart_count_ = 0;
+    uint32_t listener_health_checks_ = 0;
+    uint32_t listener_health_successes_ = 0;
+    uint32_t listener_health_failures_ = 0;
+    uint32_t last_listener_health_check_ms_ = 0;
+    uint32_t last_listener_restart_ms_ = 0;
 
     // Timeout settings
     static constexpr uint32_t CLIENT_TIMEOUT_MS = 300000;  // 5 minutes idle before disconnect
     static constexpr uint32_t INTER_PACKET_DELAY_MS = 100; // 100ms between packets
+    static constexpr uint32_t LISTENER_HEALTH_INTERVAL_MS = 15000;
+    static constexpr uint32_t LISTENER_HEALTH_CONNECT_TIMEOUT_MS = 350;
+    static constexpr uint32_t LISTENER_RESTART_COOLDOWN_MS = 90000;
+    static constexpr uint8_t LISTENER_HEALTH_MAX_FAILURES = 3;
 
     // Max per-client RX buffer. A well-formed request is 38 bytes; a write_multi
     // request with 127 registers tops out under 300 bytes. 4 KiB is ample for

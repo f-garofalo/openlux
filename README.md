@@ -1,6 +1,6 @@
 # OpenLux Network Bridge
 
-[![Version](https://img.shields.io/badge/Version-1.0.1-green.svg)](./src/config.h)
+[![Version](https://img.shields.io/badge/Version-1.1.0-green.svg)](./src/version.h)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![ESP32](https://img.shields.io/badge/ESP32-Supported-blue.svg)](https://www.espressif.com/en/products/socs/esp32)
 [![PlatformIO](https://img.shields.io/badge/PlatformIO-Ready-orange.svg)](https://platformio.org/)
@@ -36,6 +36,7 @@
 - ✅ **Read/Write Operations** - Full register access (0x03, 0x04, 0x06, 0x10)
 - ✅ **Multi-client** - Up to 5 simultaneous connections
 - ✅ **Minimal Web Dashboard** - Basic status + command runner on port 80 (with basic auth)
+- ✅ **Runtime Diagnostics** - Web/Telnet commands for status, TCP clients, cache, pause/resume, WiFi checks, and runtime log levels
 - ✅ **Dual Dongle Mode** - Can operate simultaneously with the official WiFi dongle using a breakout board
 - ✅ **Smart WiFi Roaming** - Automatically connects to the strongest AP and periodically scans for better signals (mesh-friendly)
 - ✅ **MQTT Support** - Publishes telemetry (Status, Uptime, IP) available in Home Assistant (Auto-Discovery) and accepts remote commands (reboot, status)
@@ -97,7 +98,7 @@ nano src/secrets.h
 ```
 
 **Also edit `src/config.h`** to customize:
-- RS485 pins (if different from GPIO 16, 17, 4)
+- RS485 pins (default GPIO 17 TX, GPIO 16 RX, DE disabled/auto-direction)
 - Network mode: `OPENLUX_USE_ETHERNET` (0=WiFi, 1=Ethernet)
 - WiFi portal (SSID/PASS/TIMEOUT) and log level
 - NTP servers and timezone
@@ -108,8 +109,8 @@ See [Configuration] section below for details.
 ### 3. Build & Upload
 
 ```bash
-#First upload(USB)
-pio run -e openlux -t upload
+#First upload/recovery over USB
+pio run -e openlux-serial -t upload
 
 #Monitor logs
 pio device monitor -b 115200
@@ -120,8 +121,11 @@ pio device monitor -b 115200
 After first upload, update wirelessly:
 
 ```bash
-#Edit platformio.ini with your ESP32 IP or use openlux.local
-pio run -e openlux-ota -t upload
+#Uses espota; default upload host is openlux.local
+pio run -e openlux -t upload
+
+#Or upload to a specific IP/hostname
+pio run -e openlux -t upload --upload-port 192.168.1.58
 ```
 
 ---
@@ -131,7 +135,27 @@ pio run -e openlux-ota -t upload
 - Access: `http://openlux.local` (or your device IP) on port `80`.
 - Auth: basic auth enabled by default — user: `admin`, password: `openlux` (change in `src/config.h` via `WEB_DASH_USER`/`WEB_DASH_PASS`).
 - Pages/APIs: minimal HTML dashboard at `/` with live status view (`/api/status`) and a simple command runner (`/api/cmd`) that forwards to the same command engine used by Telnet.
-- Purpose: quick troubleshooting (check status, run commands like `status`, `reboot`, `help`) without needing Telnet/HA.
+- Purpose: quick troubleshooting (check status, inspect TCP clients/cache, adjust runtime log level, pause/resume the bridge) without needing Telnet/HA.
+
+Example command API call:
+
+```bash
+curl -X POST 'http://openlux.local/api/cmd?cmd=status'
+```
+
+Common runtime commands:
+
+| Command | Purpose |
+| --- | --- |
+| `status` | Full link/network/TCP/RS485/web/firmware status |
+| `log_level` | Show current runtime log configuration |
+| `log_level 0` / `log_level 2` | Set all runtime logs to DEBUG / WARN |
+| `log_level <tag> <0-4>` | Set one module tag (`tcp`, `tcp_proto`, `rs485`, `bridge`, `net`, `web`, ...) |
+| `log_level reset` | Restore firmware log defaults |
+| `tcp_clients` / `tcp_clients drop` | Inspect or disconnect TCP clients |
+| `pause` / `resume` / `pause_status` | Temporarily reject RS485 bridge requests for maintenance |
+| `cache_status` / `cache_info` / `cache_clear` | Inspect or clear fallback cache |
+| `wifi_scan`, `wifi_reconnect`, `wifi_roam` | WiFi diagnostics and recovery |
 
 ---
 
@@ -163,8 +187,22 @@ The sensors will appear automatically in Home Assistant under the MQTT integrati
 
 - WiFi: leave `WIFI_SSID`/`WIFI_PASSWORD` empty to trigger the captive portal at first boot (portal SSID/PASS in `config.h`). Set them in `src/secrets.h` if you prefer preconfigured WiFi.
 - OTA password: set `OTA_PASSWORD` in `src/secrets.h`.
-- Static IP (WiFi): configure in `config.h` via `setStaticIP` params; portal also supports static IP when preconfigured.
+- Static IP (WiFi): define `USE_STATIC_IP`, `STATIC_IP`, `GATEWAY`, `SUBNET`, and `DNS1` in `src/secrets.h` or `src/config.local.h` (see `src/secrets.h.example`).
 - Ethernet: set `OPENLUX_USE_ETHERNET` to `1` and adjust ETH PHY/pins in `config.h`.
+- Local overrides: put site-specific overrides in `src/config.local.h`; it is ignored by git and included after `src/config.h`.
+
+### Logging
+
+- Firmware defaults are intentionally quiet: global and module log levels start at `WARN` (`2`) to avoid flooding the ESP32, rsyslog, or Home Assistant poll path.
+- Production builds compile runtime logging in (`OPENLUX_ENABLE_LOGGING=1`), so you can temporarily increase verbosity without reflashing:
+
+```bash
+curl -X POST 'http://openlux.local/api/cmd?cmd=log_level%200'
+curl -X POST 'http://openlux.local/api/cmd?cmd=log_level%20tcp%200'
+curl -X POST 'http://openlux.local/api/cmd?cmd=log_level%20reset'
+```
+
+Log levels are `0=DEBUG`, `1=INFO`, `2=WARN`, `3=ERROR`, `4=NONE`.
 
 ### Hardware Pins
 
@@ -172,7 +210,7 @@ Default pins in `src/config.h` (change if needed):
 ```cpp
 #define RS485_TX_PIN 17
 #define RS485_RX_PIN 16
-#define RS485_DE_PIN 4
+#define RS485_DE_PIN -1
 ```
 
 Ethernet pins/PHY are also in `config.h` (only used when `OPENLUX_USE_ETHERNET=1`).
@@ -214,11 +252,14 @@ For complete documentation, see: https://pre-commit.com/
 #Build
 pio run -e openlux
 
-#Upload(USB)
-pio run -e openlux -t upload
+#Upload/recovery over USB
+pio run -e openlux-serial -t upload
 
 #Upload(OTA)
-pio run -e openlux-ota -t upload
+pio run -e openlux -t upload
+
+#Upload(OTA) to a specific host/IP
+pio run -e openlux -t upload --upload-port openlux.local
 
 #Debug build
 pio run -e openlux-debug -t upload

@@ -293,8 +293,13 @@ LogLevel Logger::getGlobalLevel() const {
     return global_level_;
 }
 
+void Logger::setAllLevels(LogLevel level) {
+    global_level_ = level;
+    clearModuleLevels();
+}
+
 void Logger::setModuleLevel(const char* tag, LogLevel level) {
-    if (!tag)
+    if (!tag || tag[0] == '\0')
         return;
     for (size_t i = 0; i < module_level_count_; ++i) {
         if (strcmp(module_levels_[i].tag, tag) == 0) {
@@ -303,7 +308,10 @@ void Logger::setModuleLevel(const char* tag, LogLevel level) {
         }
     }
     if (module_level_count_ < MAX_MODULE_OVERRIDES) {
-        module_levels_[module_level_count_++] = {tag, level};
+        ModuleLevelOverride& entry = module_levels_[module_level_count_++];
+        strncpy(entry.tag, tag, MAX_MODULE_TAG_LEN);
+        entry.tag[MAX_MODULE_TAG_LEN] = '\0';
+        entry.level = level;
     }
 }
 
@@ -319,7 +327,7 @@ LogLevel Logger::getModuleLevel(const char* tag) const {
 }
 
 void Logger::clearModuleLevel(const char* tag) {
-    if (!tag)
+    if (!tag || tag[0] == '\0')
         return;
     for (size_t i = 0; i < module_level_count_; ++i) {
         if (strcmp(module_levels_[i].tag, tag) == 0) {
@@ -330,6 +338,22 @@ void Logger::clearModuleLevel(const char* tag) {
             return;
         }
     }
+}
+
+void Logger::clearModuleLevels() {
+    module_level_count_ = 0;
+    for (auto& entry : module_levels_) {
+        entry.tag[0] = '\0';
+        entry.level = LogLevel::INFO;
+    }
+}
+
+void Logger::resetLogLevels() {
+    applyCompileTimeOverrides();
+}
+
+bool Logger::isEnabled(LogLevel message_level, const char* tag) const {
+    return shouldLog(message_level, tag);
 }
 
 LogLevel Logger::getEffectiveLevel(const char* tag) const {
@@ -349,7 +373,25 @@ LogLevel Logger::clampLevel(int raw_level) {
     return static_cast<LogLevel>(raw_level);
 }
 
+const char* Logger::logLevelName(LogLevel level) {
+    switch (level) {
+        case LogLevel::DEBUG:
+            return "DEBUG";
+        case LogLevel::INFO:
+            return "INFO";
+        case LogLevel::WARN:
+            return "WARN";
+        case LogLevel::ERROR:
+            return "ERROR";
+        case LogLevel::NONE:
+            return "NONE";
+        default:
+            return "UNKNOWN";
+    }
+}
+
 void Logger::applyCompileTimeOverrides() {
+    clearModuleLevels();
     global_level_ = clampLevel(OPENLUX_LOG_LEVEL);
 #define OPENLUX_MODULE_LOG_LEVEL(name, value) setModuleLevel(#name, clampLevel(value));
 #include "../modules/logger_levels.inc"

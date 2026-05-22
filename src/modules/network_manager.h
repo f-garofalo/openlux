@@ -62,11 +62,13 @@ class NetworkManager {
 
     // WiFi status
     bool isConnected();
+    bool isGatewayReachable() const { return gateway_reachable_; }
 #if OPENLUX_USE_ETHERNET
     IPAddress getIP() const { return ETH.localIP(); }
     String getSSID() const { return String("ETH"); }
     int getRSSI() const { return 0; }
     String getMAC() const { return ETH.macAddress(); }
+    String getBSSID() const { return ETH.macAddress(); }
     int8_t getTxPower() const { return 0; }
     uint32_t getChannel() const { return 0; }
 #else
@@ -74,9 +76,17 @@ class NetworkManager {
     String getSSID() const { return WiFi.SSID(); }
     int getRSSI() const { return WiFi.RSSI(); }
     String getMAC() const { return WiFi.macAddress(); }
+    String getBSSID() const { return WiFi.BSSIDstr(); }
     int8_t getTxPower() const { return WiFi.getTxPower(); }
     uint32_t getChannel() const { return WiFi.channel(); }
 #endif
+    bool isWiFiPowerSaveDisabled() const { return wifi_power_save_disabled_; }
+    uint32_t getWiFiConnectCount() const { return wifi_connect_count_; }
+    uint32_t getWiFiDisconnectCount() const { return wifi_disconnect_count_; }
+    uint8_t getLastWiFiDisconnectReason() const { return last_wifi_disconnect_reason_; }
+    const char* getLastWiFiDisconnectReasonName() const;
+    uint32_t getLastWiFiDisconnectAgeMs() const;
+    uint32_t getLastWiFiConnectAgeMs() const;
 
     // OTA configuration
     void setupOTA(const char* hostname, const char* password, uint16_t port = 3232);
@@ -88,9 +98,9 @@ class NetworkManager {
     void setupMDNS(const char* hostname);
 
     // Utilities
-    void softReconnect();                  // disconnect + reconnect without power cycling WiFi
-    void restartInterface();               // power-cycle WiFi STA and reconnect with stored creds
-    void forceScanAndConnect();            // Force a scan and connect to best AP
+    void softReconnect();       // disconnect + reconnect without power cycling WiFi
+    void restartInterface();    // power-cycle WiFi STA and reconnect with configured creds
+    void forceScanAndConnect(); // Force a scan and connect to best AP
     void rebootDevice(const char* reason); // log and reboot
     bool startProvisioningPortal();        // start AP portal for WiFi config (blocking)
     void clearCredentials();               // wipe stored WiFi credentials (NVS)
@@ -126,6 +136,8 @@ class NetworkManager {
     void runTask();
     static void taskTrampoline(void* arg);
     void startNetworkTask();
+    void configureWiFiPowerSave();
+    void applyWiFiTxPower(const char* context);
 
     int scanAndFindBestAP(int& bestRSSI);
 
@@ -143,6 +155,7 @@ class NetworkManager {
     bool ota_enabled_ = false;
     bool portal_opened_once_ = false;
     bool boot_failures_loaded_ = false;
+    bool mdns_started_ = false;
     bool use_ethernet_ = false;
     bool eth_connected_ = false;
     uint32_t last_connect_attempt_ = 0;
@@ -155,6 +168,12 @@ class NetworkManager {
     uint32_t last_validation_ms_ = 0;
     bool gateway_reachable_ = true;
     uint8_t boot_failures_ = 0;
+    bool wifi_power_save_disabled_ = false;
+    uint32_t wifi_connect_count_ = 0;
+    uint32_t wifi_disconnect_count_ = 0;
+    uint32_t last_wifi_connect_ms_ = 0;
+    uint32_t last_wifi_disconnect_ms_ = 0;
+    uint8_t last_wifi_disconnect_reason_ = 0;
 
     NetworkConnectedCallback on_connected_ = nullptr;
     NetworkDisconnectedCallback on_disconnected_ = nullptr;

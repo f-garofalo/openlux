@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - Placeholder for future changes.
 
+## [1.1.0] - 2026-05-22
+### Added
+- **WiFi diagnostics in status**: `status` now reports AP BSSID, power-save state, connect/disconnect counters, gateway validation state, and the last WiFi disconnect reason/age.
+- **Web status diagnostics**: `status` now reports `/api/status` request count, cache hits, cache TTL, last build/total time, and slow response count.
+- **TCP listener health diagnostics**: `status` now reports listener state, client count, restart count, and self-probe health counters.
+- **Hardware reset reason in status**: `status` now includes the ESP32 reset reason and code so watchdog, brownout, panic, and power-on resets are visible after reboot.
+
+### Changed
+- **Production runtime logging control**: production and serial builds now compile `DEBUG`/`INFO`/`WARN` logging in, while preserving firmware log-level filters so diagnostics can be enabled at runtime.
+- **Quiet production log defaults**: all module log-level defaults now start at `WARN`, so reboot/reset keeps rsyslog quiet while runtime diagnostics remain available with `log_level 0` or `log_level <tag> <level>`.
+- **WiFi power-save disabled explicitly**: WiFi station mode now disables modem sleep via both Arduino WiFi and ESP-IDF power-save APIs to reduce delayed TCP SYN/ACK responses on a busy bridge.
+- **Cached `/api/status` responses**: the web dashboard/API now serves a short-lived cached status response for rapid repeat requests, reducing contention with the Lux TCP bridge on the ESP32 main loop.
+- **WiFi TX power tuning**: default station transmit power is now `WIFI_POWER_15dBm`, with power reapplied during WiFi handshakes and reported accurately in `status`.
+- Added `ProtocolBridge::is_busy()` so the TCP server can avoid feeding new requests into the bridge while an RS485 transaction is in flight.
+
+### Fixed
+- **TCP stream framing for Home Assistant**: `TCPServer::process_client_data()` now uses the declared Lux TCP `frame_length` to process one complete frame at a time, preserving any coalesced bytes for the next loop instead of clearing the full RX buffer.
+- **Backpressure while RS485 is busy**: TCP frames received while the bridge is waiting for an inverter response are kept buffered instead of being passed to the bridge and rejected as `Bridge busy`.
+- **RS485 send backoff**: when an RS485 request cannot be sent immediately, OpenLux now keeps the TCP client open and retries the same request for a short window before falling back to cache/error handling.
+- **Stale error forwarding guard**: error handling no longer wraps and forwards a previous raw RS485 response unless it matches the current request, preventing unrelated stale data from being returned after a send failure.
+- **Fallback cache counters**: cache hits and misses are now counted consistently in diagnostics.
+- **TCP listener self-healing**: when the TCP listener is accepting connections but repeated local self-probes fail, OpenLux now restarts only the TCP listener instead of rebooting the whole device or leaving Home Assistant to hit repeated connect timeouts.
+- **Runtime log level command**: `log_level <0-4>` now clears module overrides and applies the selected level to every tag, so the command actually changes runtime verbosity instead of being masked by per-module defaults.
+- **Runtime module log overrides**: module tags set through `log_level <tag> <level>` are now copied into logger storage, avoiding dangling pointers from command strings.
+- **TCP logger default override**: the `OPENLUX_LOG_LEVEL_TCP` default now applies to both the TCP server tag (`tcp`) and TCP protocol parser tag (`tcp_proto`).
+- **Filtered log overhead**: log macros now check the effective runtime level before evaluating formatted arguments, avoiding expensive `format_hex(...)` work when verbose logs are disabled.
+- **Network validation false negatives**: failed gateway/MQTT probes are diagnostics while the WiFi STA link remains associated, reducing spurious reconnects and avoidable `ASSOC_LEAVE` events.
+- **Gateway diagnostic reset on WiFi association**: when the ESP32 reconnects to the AP, the gateway reachability flag returns to optimistic `ok` until the next active validation.
+- **WiFi credentials source of truth**: firmware-configured WiFi credentials now take precedence over stale ESP32 NVS credentials, including reconnect and interface restart paths.
+- **OpenLux SSID config source**: `config/secrets.yaml` now matches the generated firmware header for the `Home-IoT-24` network.
+- **WiFi power-save status accuracy**: the reported PS state now comes from the ESP-IDF WiFi driver after forcing `WIFI_PS_NONE`.
+- **Reconnect service reinitialization**: OTA and mDNS setup are now idempotent across WiFi reconnects, preventing repeated setup failures after link recovery.
+- **Auth-failure reconnect dampening**: repeated WiFi auth/association disconnect events now defer explicit reconnect scans briefly, reducing reconnect storms while the ESP32 WiFi stack is already retrying.
+- **WiFi TX power status display**: status output now recognizes observed ESP32 raw TX power values for `8.25 dBm` and `14.75 dBm`.
+
 ## [1.0.7] - 2026-04-17
 ### Security
 - **TCP input hardening**: `parse_request` now validates the declared `frame_length` against the actual packet size and requires `byte_count == register_count*2` on write-multi, blocking confused-deputy parsing from malformed/malicious TCP frames.

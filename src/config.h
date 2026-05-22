@@ -90,6 +90,10 @@
  * @brief WiFi TX Power
  *
  * Adjust transmission power to improve stability with certain APs.
+ *
+ * OpenLux normally sits close to the inverter/AP and does not need maximum
+ * output power. A mid-range TX power keeps airtime noise below the ESP32
+ * default while leaving enough uplink margin for AP authentication/association.
  * Options:
  * - WIFI_POWER_19_5dBm
  * - WIFI_POWER_19dBm
@@ -103,9 +107,9 @@
  * - WIFI_POWER_5dBm
  * - WIFI_POWER_2dBm
  * - WIFI_POWER_MINUS_1dBm
- * Comment if unsure to use default.
+ * Comment if unsure to use the Arduino/ESP-IDF default.
  */
-// #define WIFI_TX_POWER WIFI_POWER_8_5dBm
+#define WIFI_TX_POWER WIFI_POWER_15dBm
 
 /**
  * @brief Periodic WiFi Scan
@@ -240,17 +244,17 @@
  * Example: force RS485 to DEBUG while keeping global INFO level.
  *   #define OPENLUX_LOG_LEVEL_RS485 0
  */
-#define OPENLUX_LOG_LEVEL_MAIN 1
+#define OPENLUX_LOG_LEVEL_MAIN 2
 #define OPENLUX_LOG_LEVEL_RS485 2
-#define OPENLUX_LOG_LEVEL_NETWORK 1
-#define OPENLUX_LOG_LEVEL_MQTT 1
+#define OPENLUX_LOG_LEVEL_NETWORK 2
+#define OPENLUX_LOG_LEVEL_MQTT 2
 #define OPENLUX_LOG_LEVEL_BRIDGE 2
 #define OPENLUX_LOG_LEVEL_TCP 2
-#define OPENLUX_LOG_LEVEL_SYSTEM 1
-#define OPENLUX_LOG_LEVEL_COMMAND 1
-#define OPENLUX_LOG_LEVEL_NTP 1
-#define OPENLUX_LOG_LEVEL_WEB 1
-#define OPENLUX_LOG_LEVEL_GUARD 1
+#define OPENLUX_LOG_LEVEL_SYSTEM 2
+#define OPENLUX_LOG_LEVEL_COMMAND 2
+#define OPENLUX_LOG_LEVEL_NTP 2
+#define OPENLUX_LOG_LEVEL_WEB 2
+#define OPENLUX_LOG_LEVEL_GUARD 2
 #define OPENLUX_LOG_LEVEL_PROTO 2
 
 /**

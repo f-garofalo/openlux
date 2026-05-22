@@ -6,4 +6,4 @@
 #pragma once
 
 #define FIRMWARE_NAME "OpenLux WiFi Bridge"
-#define FIRMWARE_VERSION "1.0.7"
+#define FIRMWARE_VERSION "1.1.0"

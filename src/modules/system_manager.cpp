@@ -59,17 +59,17 @@ void SystemManager::begin() {
     prefs_.begin("openlux", false);
 
     // Log ESP32 hardware reset reason
-    esp_reset_reason_t reset_reason = esp_reset_reason();
-    LOGI(TAG, "ESP32 Reset Reason: %s (code: %d)", getResetReasonString(reset_reason),
-         reset_reason);
+    last_hw_reset_reason_ = esp_reset_reason();
+    LOGI(TAG, "ESP32 Reset Reason: %s (code: %d)", getResetReasonString(last_hw_reset_reason_),
+         last_hw_reset_reason_);
 
     // Warn on abnormal resets
-    if (reset_reason == ESP_RST_PANIC) {
+    if (last_hw_reset_reason_ == ESP_RST_PANIC) {
         LOGE(TAG, "⚠ Previous boot crashed with PANIC!");
-    } else if (reset_reason == ESP_RST_TASK_WDT || reset_reason == ESP_RST_INT_WDT ||
-               reset_reason == ESP_RST_WDT) {
+    } else if (last_hw_reset_reason_ == ESP_RST_TASK_WDT ||
+               last_hw_reset_reason_ == ESP_RST_INT_WDT || last_hw_reset_reason_ == ESP_RST_WDT) {
         LOGE(TAG, "⚠ Previous boot had a WATCHDOG TIMEOUT!");
-    } else if (reset_reason == ESP_RST_BROWNOUT) {
+    } else if (last_hw_reset_reason_ == ESP_RST_BROWNOUT) {
         LOGE(TAG, "⚠ Previous boot had a BROWNOUT (power issue)!");
     }
 
@@ -199,4 +199,8 @@ uint8_t SystemManager::getChipCores() const {
 
 uint32_t SystemManager::getUptime() const {
     return millis() / 1000;
+}
+
+const char* SystemManager::getHardwareResetReason() const {
+    return getResetReasonString(last_hw_reset_reason_);
 }

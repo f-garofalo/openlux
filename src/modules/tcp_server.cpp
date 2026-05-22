@@ -9,12 +9,24 @@
 
 #include "../config.h"
 #include "logger.h"
+#include "network_manager.h"
 #include "protocol_bridge.h"
 #include "tcp_protocol.h"
 
 #include <algorithm>
 
+#include <WiFiClient.h>
+
 static const char* TAG = "tcp";
+
+namespace {
+static constexpr size_t TCP_FRAME_HEADER_SIZE = 6;
+
+bool starts_with_tcp_prefix(const std::vector<uint8_t>& buffer) {
+    return buffer.size() >= 2 && buffer[0] == TCP_PROTO_PREFIX[0] &&
+           buffer[1] == TCP_PROTO_PREFIX[1];
+}
+} // namespace
 
 TCPServer& TCPServer::getInstance() {
     static TCPServer instance;
@@ -34,6 +46,7 @@ void TCPServer::begin(uint16_t port, size_t max_clients) {
 
     port_ = port;
     max_clients_ = max_clients;
+    accepting_connections_ = false;
 
     LOGI(TAG, "Starting TCP Server on port %d", port_);
     LOGI(TAG, "  Max clients: %d", max_clients_);
@@ -71,6 +84,8 @@ void TCPServer::loop() {
 
     // SAFELY remove clients marked for removal (after all callbacks have returned)
     cleanup_pending_clients();
+
+    check_listener_health();
 }
 
 void TCPServer::cleanup_pending_clients() {
@@ -118,6 +133,7 @@ void TCPServer::stop() {
     // Stop server
     delete server_;
     server_ = nullptr;
+    accepting_connections_ = false;
 
     LOGI(TAG, "TCP Server stopped");
 }
@@ -180,6 +196,19 @@ String TCPServer::describe_clients() const {
     out += "Clients: ";
     out += clients_.size(); // Implicit conversion, no temporary String
     out += "\n";
+    out += "Listener: ";
+    out += server_ ? "running" : "stopped";
+    out += " accepting=";
+    out += accepting_connections_ ? "yes" : "no";
+    out += " restarts=";
+    out += listener_restart_count_;
+    out += " health=";
+    out += listener_health_successes_;
+    out += "/";
+    out += listener_health_checks_;
+    out += " fail_streak=";
+    out += listener_health_failures_;
+    out += "\n";
     for (size_t i = 0; i < clients_.size(); i++) {
         const auto& c = clients_[i];
         out += " [";
@@ -221,6 +250,12 @@ void TCPServer::handle_new_client(void* arg, AsyncClient* client) {
     if (!server->accepting_connections_) {
         LOGW(TAG, "Server not ready, rejecting connection from %s:%d",
              client->remoteIP().toString().c_str(), client->remotePort());
+        server->destroy_client(client);
+        return;
+    }
+
+    if (server->is_self_probe_client(client)) {
+        LOGD(TAG, "Listener self-probe accepted");
         server->destroy_client(client);
         return;
     }
@@ -411,26 +446,163 @@ void TCPServer::process_client_data(TCPClient* tcp_client) {
         return;
     }
 
-    LOGD(TAG, "Processing buffer: %d bytes", tcp_client->rx_buffer.size());
+    LOGD(TAG, "Processing buffer: %u bytes", (unsigned) tcp_client->rx_buffer.size());
 
-    // Check if we have a complete packet (38 bytes for WiFi request)
-    if (tcp_client->rx_buffer.size() < 38) {
-        LOGD(TAG, "Waiting for more data (have %d, need 38)", tcp_client->rx_buffer.size());
-        return; // Wait for more data
+    if (bridge_->is_busy()) {
+        LOGD(TAG, "Bridge busy; keeping %u buffered byte(s) for later",
+             (unsigned) tcp_client->rx_buffer.size());
+        return;
     }
 
-    LOGI(TAG, "→ Forwarding %d bytes to bridge from %s", tcp_client->rx_buffer.size(),
+    if (tcp_client->rx_buffer.size() < TCP_FRAME_HEADER_SIZE) {
+        LOGD(TAG, "Waiting for TCP header (have %u, need %u)",
+             (unsigned) tcp_client->rx_buffer.size(), (unsigned) TCP_FRAME_HEADER_SIZE);
+        return;
+    }
+
+    if (!starts_with_tcp_prefix(tcp_client->rx_buffer)) {
+        LOGW(TAG, "Invalid TCP prefix from %s, closing connection: %s",
+             tcp_client->remote_ip.c_str(),
+             TcpProtocol::format_hex(tcp_client->rx_buffer.data(),
+                                     std::min(tcp_client->rx_buffer.size(), (size_t) 16))
+                 .c_str());
+        tcp_client->rx_buffer.clear();
+        tcp_client->pending_removal = true;
+        return;
+    }
+
+    const uint16_t frame_length = TcpProtocol::parse_little_endian_uint16(
+        tcp_client->rx_buffer.data(), TcpProtocolOffsets::FRAME_LEN);
+    const size_t total_frame_size = TCP_FRAME_HEADER_SIZE + frame_length;
+
+    if (frame_length < TCP_PROTO_REQUEST_FRAME_LENGTH || total_frame_size > MAX_RX_BUFFER_SIZE) {
+        LOGW(TAG, "Invalid TCP frame length from %s: frame_len=%u total=%u",
+             tcp_client->remote_ip.c_str(), frame_length, (unsigned) total_frame_size);
+        tcp_client->rx_buffer.clear();
+        tcp_client->pending_removal = true;
+        return;
+    }
+
+    if (tcp_client->rx_buffer.size() < total_frame_size) {
+        LOGD(TAG, "Waiting for complete TCP frame from %s (have %u, need %u)",
+             tcp_client->remote_ip.c_str(), (unsigned) tcp_client->rx_buffer.size(),
+             (unsigned) total_frame_size);
+        return;
+    }
+
+    if (tcp_client->rx_buffer.size() > total_frame_size) {
+        LOGI(TAG, "RX buffer has %u extra byte(s) after current frame from %s",
+             (unsigned) (tcp_client->rx_buffer.size() - total_frame_size),
+             tcp_client->remote_ip.c_str());
+    }
+
+    std::vector<uint8_t> frame(tcp_client->rx_buffer.begin(),
+                               tcp_client->rx_buffer.begin() + total_frame_size);
+
+    LOGI(TAG, "→ Forwarding %u byte frame to bridge from %s", (unsigned) frame.size(),
          tcp_client->remote_ip.c_str());
 
     // Try to parse and forward to bridge
     // The bridge will handle the packet and send response back
     // (Bridge will acquire TCP_CLIENT_PROCESSING guard for coordination)
-    bridge_->process_wifi_request(tcp_client->rx_buffer.data(), tcp_client->rx_buffer.size(),
-                                  tcp_client);
+    bridge_->process_wifi_request(frame.data(), frame.size(), tcp_client);
 
-    // Clear buffer after processing
-    tcp_client->rx_buffer.clear();
-    LOGD(TAG, "Buffer cleared after processing");
+    // Remove only the bytes consumed by this frame; any coalesced TCP frame
+    // remains buffered until the bridge finishes the current RS485 request.
+    tcp_client->rx_buffer.erase(tcp_client->rx_buffer.begin(),
+                                tcp_client->rx_buffer.begin() + total_frame_size);
+    LOGD(TAG, "Consumed %u byte frame, %u byte(s) remain buffered", (unsigned) total_frame_size,
+         (unsigned) tcp_client->rx_buffer.size());
+}
+
+void TCPServer::check_listener_health() {
+    if (!server_ || !accepting_connections_ || !clients_.empty()) {
+        return;
+    }
+
+    auto& network = NetworkManager::getInstance();
+    if (!network.isConnected() || network.isOTAInProgress() || network.isScanning()) {
+        return;
+    }
+
+    const uint32_t now = millis();
+    if (now - last_listener_health_check_ms_ < LISTENER_HEALTH_INTERVAL_MS) {
+        return;
+    }
+    last_listener_health_check_ms_ = now;
+    listener_health_checks_++;
+
+    if (run_listener_self_probe()) {
+        listener_health_successes_++;
+        if (listener_health_failures_ > 0) {
+            LOGI(TAG, "TCP listener health recovered after %u failed probe(s)",
+                 listener_health_failures_);
+        }
+        listener_health_failures_ = 0;
+        return;
+    }
+
+    listener_health_failures_++;
+    LOGW(TAG, "TCP listener self-probe failed (%u/%u)", listener_health_failures_,
+         LISTENER_HEALTH_MAX_FAILURES);
+
+    if (listener_health_failures_ < LISTENER_HEALTH_MAX_FAILURES) {
+        return;
+    }
+
+    if (last_listener_restart_ms_ != 0 &&
+        now - last_listener_restart_ms_ < LISTENER_RESTART_COOLDOWN_MS) {
+        LOGW(TAG, "TCP listener restart suppressed by cooldown");
+        return;
+    }
+
+    restart_listener("listener health probe failed");
+}
+
+bool TCPServer::run_listener_self_probe() {
+    IPAddress local_ip = NetworkManager::getInstance().getIP();
+    if (local_ip == IPAddress(0, 0, 0, 0)) {
+        return false;
+    }
+
+    WiFiClient probe;
+    probe.setTimeout(1);
+
+    const bool connected = probe.connect(local_ip, port_, LISTENER_HEALTH_CONNECT_TIMEOUT_MS);
+    if (connected) {
+        probe.stop();
+    }
+
+    return connected;
+}
+
+bool TCPServer::is_self_probe_client(const AsyncClient* client) const {
+    if (!client) {
+        return false;
+    }
+
+    const IPAddress local_ip = NetworkManager::getInstance().getIP();
+    return local_ip != IPAddress(0, 0, 0, 0) && client->remoteIP() == local_ip;
+}
+
+void TCPServer::restart_listener(const char* reason) {
+    const bool should_accept = accepting_connections_;
+    const uint16_t restart_port = port_;
+    const size_t restart_max_clients = max_clients_;
+
+    LOGW(TAG, "Restarting TCP listener on port %u: %s", restart_port,
+         reason ? reason : "unknown reason");
+
+    stop();
+    begin(restart_port, restart_max_clients);
+
+    if (should_accept) {
+        accept_connections();
+    }
+
+    listener_restart_count_++;
+    listener_health_failures_ = 0;
+    last_listener_restart_ms_ = millis();
 }
 
 void TCPServer::check_client_timeouts() {

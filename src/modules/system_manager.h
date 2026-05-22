@@ -8,6 +8,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <esp_system.h>
 
 #include <Preferences.h>
 
@@ -27,6 +28,8 @@ class SystemManager {
     // System operations
     void reboot(const char* reason);
     String getLastRebootReason() const { return last_reboot_reason_; }
+    const char* getHardwareResetReason() const;
+    int getHardwareResetReasonCode() const { return static_cast<int>(last_hw_reset_reason_); }
 
     // Diagnostics
     uint32_t getFreeHeap() const;
@@ -50,6 +53,7 @@ class SystemManager {
 
     Preferences prefs_;
     String last_reboot_reason_ = "Unknown";
+    esp_reset_reason_t last_hw_reset_reason_ = ESP_RST_UNKNOWN;
 
     // Health monitoring
     uint32_t last_heap_check_ = 0;

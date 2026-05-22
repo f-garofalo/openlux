@@ -32,8 +32,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configurazione
-ESP32_IP="192.168.1.58"
-ESP32_HOSTNAME="openlux.local"
+ESP32_IP="10.10.2.224"
+ESP32_HOSTNAME="openlux.lan"
 TELNET_PORT="23"
 
 # Banner
@@ -98,19 +98,19 @@ upload_ota() {
         1)
             echo -e "${YELLOW}→ OTA Upload via IP ${ESP32_IP}...${NC}"
             echo -e "${BLUE}ℹ OTA Password: openlux123${NC}"
-            pio run -e openlux-ota -t upload
+            pio run -e openlux -t upload
             ;;
         2)
             echo -e "${YELLOW}→ OTA Upload via hostname ${ESP32_HOSTNAME}...${NC}"
             echo -e "${BLUE}ℹ OTA Password: openlux123${NC}"
             # Temporarily use hostname
-            pio run -e openlux-ota -t upload --upload-port $ESP32_HOSTNAME
+            pio run -e openlux -t upload --upload-port $ESP32_HOSTNAME
             ;;
         3)
             read -p "Enter ESP32 IP address: " custom_ip
             echo -e "${YELLOW}→ OTA Upload via IP ${custom_ip}...${NC}"
             echo -e "${BLUE}ℹ OTA Password: openlux123${NC}"
-            pio run -e openlux-ota -t upload --upload-port $custom_ip
+            pio run -e openlux -t upload --upload-port $custom_ip
             ;;
         *)
             echo -e "${RED}✗ Invalid choice${NC}"
@@ -204,9 +204,9 @@ upload_ota_and_monitor_wifi() {
     echo ""
 
     if [ "$ota_choice" = "1" ]; then
-        pio run -e openlux-ota -t upload
+        pio run -e openlux -t upload
     else
-        pio run -e openlux-ota -t upload --upload-port $target_host
+        pio run -e openlux -t upload --upload-port $target_host
     fi
 
     if [ $? -eq 0 ]; then

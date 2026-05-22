@@ -32,6 +32,10 @@ void ProtocolBridge::loop() {
         return;
     }
 
+    if (pending_rs485_send_retry_) {
+        process_pending_rs485_send();
+    }
+
     // Check for RS485 response if we're waiting
     if (waiting_rs485_response_) {
         process_rs485_response();
@@ -160,7 +164,7 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
          TcpProtocol::format_serial(parse_result.inverter_serial).c_str());
 
     // Check if we're already processing a request
-    if (waiting_rs485_response_) {
+    if (is_busy()) {
         LOGW(TAG, "⚠ Already processing a request, rejecting");
         send_err("Bridge busy");
         failed_requests_++;
@@ -179,43 +183,97 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
          TcpProtocol::format_hex(parse_result.rs485_packet.data(), parse_result.rs485_packet.size())
              .c_str());
 
-    // Send RS485 request (read or write)
-    bool sent = false;
-
-    if (parse_result.is_write_operation) {
-        sent = rs485_->send_write_request(parse_result.start_register, parse_result.write_values);
-    } else {
-        ModbusFunctionCode func = static_cast<ModbusFunctionCode>(parse_result.function_code);
-        sent = rs485_->send_read_request(func, parse_result.start_register,
-                                         parse_result.register_count);
-    }
-
-    if (!sent) {
-        // ========== TRY FALLBACK CACHE BEFORE ERROR ==========
-        // If send failed (e.g., due to RS485_BUS_BUSY), try to use cached response
-        LOGI(TAG, "Failed to send RS485 request, trying fallback cache...");
-
-        ReadCacheKey cache_key{parse_result.function_code, parse_result.start_register,
-                               parse_result.register_count};
-
-        std::vector<uint8_t> fallback_response;
-        if (get_fallback_response(cache_key, fallback_response)) {
-            // Cache hit! Send cached response instead of error
-            LOGI(TAG, "✓ Fallback cache HIT: %s", cache_key.format().c_str());
-            send_response_to_client(fallback_response, fallback_response.size());
+    if (!send_current_request_to_rs485()) {
+        if (try_fallback_cache_for_current_request("initial RS485 send failed")) {
             failed_requests_++;
             return;
         }
-        // ========== END CACHE ATTEMPT ==========
 
-        // No cache available - send error
-        LOGE(TAG, "✗ Failed to send RS485 request (no fallback cache)");
-        send_err("RS485 send failed");
-        failed_requests_++;
+        defer_current_request_retry("initial RS485 send failed");
         return;
     }
     waiting_rs485_response_ = true;
     last_request_time_ = millis();
+}
+
+bool ProtocolBridge::send_current_request_to_rs485() {
+    const TcpParseResult& request = current_request_.wifi_request;
+
+    if (request.is_write_operation) {
+        return rs485_->send_write_request(request.start_register, request.write_values);
+    }
+
+    ModbusFunctionCode func = static_cast<ModbusFunctionCode>(request.function_code);
+    return rs485_->send_read_request(func, request.start_register, request.register_count);
+}
+
+void ProtocolBridge::defer_current_request_retry(const char* reason) {
+    pending_rs485_send_retry_ = true;
+    last_send_attempt_time_ = millis();
+    current_request_.retry_count = 0;
+
+    LOGW(TAG, "%s; keeping TCP client open and retrying for %lums", reason,
+         RS485_SEND_RETRY_WINDOW_MS);
+}
+
+void ProtocolBridge::finish_deferred_send_failure(const char* reason) {
+    pending_rs485_send_retry_ = false;
+
+    if (try_fallback_cache_for_current_request(reason)) {
+        failed_requests_++;
+        return;
+    }
+
+    LOGE(TAG, "✗ %s (no fallback cache)", reason);
+    send_error_response(reason);
+    failed_requests_++;
+}
+
+void ProtocolBridge::process_pending_rs485_send() {
+    TCPClient* client = resolve_current_client();
+    if (!client) {
+        LOGW(TAG, "Deferred RS485 send abandoned: client %s disconnected",
+             current_request_.client_ip.c_str());
+        pending_rs485_send_retry_ = false;
+        return;
+    }
+
+    const uint32_t now = millis();
+    const uint32_t age_ms = now - current_request_.timestamp;
+
+    if (age_ms >= RS485_SEND_RETRY_WINDOW_MS ||
+        current_request_.retry_count >= RS485_SEND_MAX_RETRIES) {
+        finish_deferred_send_failure("RS485 send retry window expired");
+        return;
+    }
+
+    if (now - last_send_attempt_time_ < RS485_SEND_RETRY_DELAY_MS) {
+        return;
+    }
+
+    auto& guard_mgr = OperationGuardManager::getInstance();
+    if (!guard_mgr.canPerformOperation(OperationGuard::OperationType::TCP_CLIENT_PROCESSING)) {
+        return;
+    }
+
+    auto guard = guard_mgr.acquireGuard(OperationGuard::OperationType::TCP_CLIENT_PROCESSING,
+                                        "retry_rs485_send");
+
+    current_request_.retry_count++;
+    last_send_attempt_time_ = now;
+
+    if (!send_current_request_to_rs485()) {
+        LOGD(TAG, "RS485 send retry %u still busy/failed for %s", current_request_.retry_count,
+             current_request_.client_ip.c_str());
+        return;
+    }
+
+    pending_rs485_send_retry_ = false;
+    waiting_rs485_response_ = true;
+    last_request_time_ = millis();
+
+    LOGI(TAG, "RS485 send succeeded after %u retry attempt(s), age=%lums",
+         current_request_.retry_count, age_ms);
 }
 
 bool ProtocolBridge::validate_response_match(const ParseResult& result,
@@ -334,8 +392,10 @@ void ProtocolBridge::send_error_response(const String& error) {
 
     // Get the last RS485 raw response if available
     const std::vector<uint8_t>& raw_response = rs485_->get_last_raw_response();
+    const ParseResult& last_result = rs485_->get_last_result();
 
-    if (!raw_response.empty()) {
+    if (!raw_response.empty() &&
+        validate_response_match(last_result, current_request_.wifi_request)) {
         // We have the raw exception response from inverter - forward it to client
         std::vector<uint8_t> wifi_response;
         uint8_t dongle_serial[10];
@@ -352,6 +412,8 @@ void ProtocolBridge::send_error_response(const String& error) {
             LOGI(TAG, "✓ Exception response forwarded to client (%d bytes)", written);
             return;
         }
+    } else if (!raw_response.empty()) {
+        LOGW(TAG, "Raw RS485 error does not match current request; not forwarding stale data");
     }
 
     // Fallback: close connection if we can't build proper response
@@ -475,29 +537,8 @@ void ProtocolBridge::build_value_summary(const ParseResult& rs485_result, char* 
 }
 
 bool ProtocolBridge::try_fallback_cache_on_error(const ParseResult& rs485_result) {
-    // Only try fallback for READ operations
-    if (current_request_.wifi_request.is_write_operation) {
-        return false;
-    }
-
-    ReadCacheKey cache_key{current_request_.wifi_request.function_code,
-                           current_request_.wifi_request.start_register,
-                           current_request_.wifi_request.register_count};
-
-    std::vector<uint8_t> fallback_response;
-    if (get_fallback_response(cache_key, fallback_response)) {
-        // Fallback cache found - use it instead of error
-        LOGI(TAG, "RS485 failed, using FALLBACK CACHE for %s", cache_key.format().c_str());
-
-        // Send cached response to client
-        send_response_to_client(fallback_response, fallback_response.size());
-        return true; // ← Success, cache was used
-    }
-
-    LOGW(TAG, "⚠ No fallback cache available for this request (%u-%u, %u)",
-         current_request_.wifi_request.function_code, current_request_.wifi_request.start_register,
-         current_request_.wifi_request.register_count);
-    return false; // ← Failed, no cache available
+    (void) rs485_result;
+    return try_fallback_cache_for_current_request("RS485 error");
 }
 
 // ============================================================================
@@ -537,8 +578,34 @@ void ProtocolBridge::cache_response_for_fallback(const ReadCacheKey& key,
 
     fallback_cache_[key] = entry;
 
-    LOGD(TAG, "Fallback cache: stored %s (size=%zu/5)", key.format().c_str(),
-         fallback_cache_.size());
+    LOGD(TAG, "Fallback cache: stored %s (size=%zu/%zu)", key.format().c_str(),
+         fallback_cache_.size(), MAX_CACHE_ENTRIES);
+}
+
+bool ProtocolBridge::try_fallback_cache_for_current_request(const char* reason) {
+    // Only try fallback for READ operations
+    if (current_request_.wifi_request.is_write_operation) {
+        return false;
+    }
+
+    ReadCacheKey cache_key{current_request_.wifi_request.function_code,
+                           current_request_.wifi_request.start_register,
+                           current_request_.wifi_request.register_count};
+
+    std::vector<uint8_t> fallback_response;
+    if (get_fallback_response(cache_key, fallback_response)) {
+        // Fallback cache found - use it instead of error
+        LOGI(TAG, "%s, using FALLBACK CACHE for %s", reason, cache_key.format().c_str());
+
+        // Send cached response to client
+        send_response_to_client(fallback_response, fallback_response.size());
+        return true; // ← Success, cache was used
+    }
+
+    LOGW(TAG, "⚠ No fallback cache available for this request (%u-%u, %u)",
+         current_request_.wifi_request.function_code, current_request_.wifi_request.start_register,
+         current_request_.wifi_request.register_count);
+    return false; // ← Failed, no cache available
 }
 
 void ProtocolBridge::evict_oldest_cache_entry() {
@@ -609,10 +676,12 @@ bool ProtocolBridge::get_fallback_response(const ReadCacheKey& key,
     auto it = fallback_cache_.find(key);
 
     if (it == fallback_cache_.end()) {
+        cache_misses_++;
         return false; // Not in cache
     }
 
     // Found - return it
+    cache_hits_++;
     ReadCacheEntry& entry = it->second;
     out_response = entry.tcp_response_packet;
     entry.increment_hit_count();
