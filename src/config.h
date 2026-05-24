@@ -268,11 +268,19 @@
 #define WIFI_WATCHDOG_RESTART_DELAY_MS \
     (5 * 60 * 1000) ///< After this downtime, restart WiFi interface
 #define WIFI_WATCHDOG_REBOOT_DELAY_MS (10 * 60 * 1000) ///< After this downtime, reboot device
-#define WIFI_WATCHDOG_PORTAL_DELAY_MS \
-    (20 * 60 * 1000) ///< After this downtime, open provisioning portal (AP) once
 
 #define RS485_PROBE_BACKOFF_BASE_MS 5000           ///< Initial backoff for RS485 probe retry
 #define RS485_PROBE_BACKOFF_MAX_MS (5 * 60 * 1000) ///< Max backoff for RS485 probe retry
+#define RS485_UART_RX_BUFFER_SIZE 1024 ///< UART RX ring buffer for full 125-register frames
+#define RS485_MIN_REQUEST_GAP_MS 120   ///< Quiet time between serialized RS485 requests
+#define RS485_COEXISTENCE_ENABLED 1    ///< Enable dual-master coexistence backoff/cache mode
+#define RS485_COEXISTENCE_TRIGGER_EVENTS \
+    2 ///< Consecutive contention events before quiet-window backoff
+#define RS485_COEXISTENCE_BACKOFF_MS 8000 ///< Quiet window after detected RS485 contention
+#define RS485_COEXISTENCE_PRESSURE_WINDOW_MS \
+    20000 ///< Prefer fresh cache shortly after any contention event
+#define RS485_COEXISTENCE_CACHE_MAX_AGE_MS \
+    45000 ///< Max cached-data age served proactively while the bus is contested
 #define COMMAND_DEBOUNCE_MS 10000   ///< Debounce window for reboot/wifi_restart commands
 #define BOOT_FAIL_RESET_THRESHOLD 5 ///< After N failed boots, clear WiFi creds and open portal
 

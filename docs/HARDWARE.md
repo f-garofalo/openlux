@@ -23,7 +23,7 @@
 │             │          │  Module     │          │  Inverter   │
 │         TX ─┼─────────>│ DI          │          │             │
 │         RX ─┼<─────────│ RO          │          │             │
-│     GPIO 4 ─┼─────────>│ DE/RE*      │          │             │
+│      GPIO* ─┼─────────>│ DE/RE*      │          │             │
 │             │          │             │          │             │
 │        GND ─┼──────────┼─ GND        │          │             │
 │             │          │          A ─┼─────────>│ RS485-A     │
@@ -32,11 +32,11 @@
      (    )                   (3.3V/5V)                (Inverter)
 ```
 
-> *DE/RE pin: if your RS485 module needs direction control, wire the pin defined by `RS485_DE_PIN`; if it is auto-direction, set `RS485_DE_PIN` to `-1`.
+> *DE/RE pin: if your RS485 module needs direction control, wire the GPIO defined by `RS485_DE_PIN`; if it is auto-direction or has no DE/RE input, set `RS485_DE_PIN` to `-1`.
 
 
 ## Inverter RS485 ports (connection scenarios)
-- Some inverters (e.g., SNA6000) expose RS485 on the CT port, so you can keep both the official dongle and OpenLux connected at the same time.<br/>
+- Some inverters (e.g., SNA6000) expose RS485 on the CT port, so OpenLux can be wired while the official dongle remains installed.<br/>
 For inverters with RS485 on the CT port, see this wiring reference: https://github.com/nicolaERTT/ESP32-luxpower
 - Other inverters (e.g., SNA-12K) expose RS485 only on the HDMI port used by the official dongle. In that case, unplug the official dongle and wire the HDMI pins as follows:
 
@@ -47,7 +47,7 @@ For inverters with RS485 on the CT port, see this wiring reference: https://gith
 | 15       | RS485A  | Differential A               |
 | 14       | RS485B  | Differential B               |
 
-     5V and GND can be connected directly to the ESP32 pins (no external PSU needed).
+Use the inverter 5V rail only if your ESP32 board/regulator and RS485 module are designed for it. Do not feed 5V into the ESP32 3V3 pin.
 
 
 ## Example hardware used
@@ -76,13 +76,22 @@ Non-affiliate links (AliExpress):
 ## Dual dongle mode (optional)
 <img src="dual_dongle_mode-schematic.png" alt="schematic dual dongle mode" height="600px"/>
 
+Dual dongle mode is experimental and depends on the physical RS485 bus. OpenLux can ignore unrelated valid frames and back off during contention, but software cannot fix a bus with missing termination, missing failsafe bias, bad A/B polarity, floating ground, or unstable transceiver direction control.
+
 ## Pin configuration
 Edit in `src/config.h`:
 ```cpp
 #define RS485_TX_PIN 17
 #define RS485_RX_PIN 16
-#define RS485_DE_PIN 4   // set to -1 if the RS485 module is auto-direction
+#define RS485_DE_PIN -1  // current default: auto-direction/no DE control
 ```
+
+Common alternatives:
+```cpp
+#define RS485_DE_PIN 4   // example for modules that expose DE/RE direction control
+```
+
+Prefer explicit DE/RE control when comparing transceivers or debugging corrupted frames. Auto-direction modules can work, but their turn-around timing varies by board.
 
 ## Ethernet (optional)
 If your ESP32 board has Ethernet, set `OPENLUX_USE_ETHERNET` to `1` in `src/config.h` and adjust the PHY/pin parameters:
@@ -104,7 +113,21 @@ Provide a detailed schematic for:
 - RS485 module power (3.3V/5V per module spec).
 - (Optional) Ethernet connections: RMII/MDC/MDIO/CLK/RESET pins specific to your board.
 
+## RS485 signal-quality checklist
+
+If logs show CRC mismatches, invalid function codes, very long malformed frames, or repeated coexistence backoff events, check the physical bus before changing Home Assistant polling:
+
+- Use a twisted pair for A/B and keep stubs short.
+- Share GND between inverter, ESP32, and RS485 transceiver.
+- Verify A/B polarity with the actual transceiver labels; vendors are not always consistent.
+- Add or verify 120 ohm termination where appropriate for the cable topology.
+- Ensure failsafe biasing so the bus has a stable idle state. The official dongle may have been providing useful bias/termination in some installations.
+- Keep RS485 wiring away from inverter AC/DC power cables.
+- Compare an auto-direction module with a transceiver using explicit DE/RE control if long frames are corrupted.
+- Do not assume every "collision" log means a real second master; corrupted/noisy bytes can look like unrelated frames.
+
 ## Safety
 - Use shielded cable for RS485 and, if recommended, tie the shield to GND on the inverter side.
 - Avoid ground loops; share GND between ESP32 and RS485 transceiver.
 - Verify voltage levels: most RS485 modules accept 5V, but the ESP32 is 3.3V.
+- Power down before rewiring inverter connectors or HDMI breakout boards.

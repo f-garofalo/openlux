@@ -48,6 +48,14 @@ bool RS485Manager::is_bus_busy() const {
     return millis() < bus_busy_until_ms_;
 }
 
+uint32_t RS485Manager::get_bus_busy_remaining_ms() const {
+    const uint32_t now = millis();
+    if ((int32_t) (bus_busy_until_ms_ - now) <= 0) {
+        return 0;
+    }
+    return bus_busy_until_ms_ - now;
+}
+
 void RS485Manager::begin(HardwareSerial& serial, int8_t tx_pin, int8_t rx_pin, int8_t de_pin,
                          uint32_t baud_rate) {
     serial_ = &serial;
@@ -61,9 +69,14 @@ void RS485Manager::begin(HardwareSerial& serial, int8_t tx_pin, int8_t rx_pin, i
     }
     LOGI(TAG, "  Baud Rate: %d", baud_rate);
 
+    // A 125-register Lux response is ~267 bytes, so the default UART ring
+    // can overflow if the main loop is busy for a single large frame.
+    serial_->setRxBufferSize(RS485_UART_RX_BUFFER_SIZE);
+
     // Initialize UART with short timeout to avoid blocking
     serial_->begin(baud_rate, SERIAL_8N1, rx_pin, tx_pin);
     serial_->setTimeout(15);
+    rx_buffer_.reserve(MODBUS_MAX_RX_BUFFER_SIZE);
 
     // Initialize DE/RE pin (receive mode by default)
     if (de_pin_ >= 0) {
@@ -114,6 +127,7 @@ void RS485Manager::request_inverter_serial_probe() {
     serial_probe_pending_ = true;
     expected_function_code_ = ModbusFunctionCode::READ_INPUT;
     expected_start_reg_ = MODBUS_INVERTER_SN_START_REG;
+    expected_register_count_ = MODBUS_INVERTER_SN_REG_COUNT;
     send_packet(packet);
 }
 
@@ -163,6 +177,14 @@ bool RS485Manager::send_read_request(ModbusFunctionCode func, uint16_t start_reg
     }
     // ========== END BUS BUSY CHECK ==========
 
+    const uint32_t now = millis();
+    if (last_transaction_end_ms_ != 0 &&
+        (now - last_transaction_end_ms_) < RS485_MIN_REQUEST_GAP_MS) {
+        LOGD(TAG, "Waiting for RS485 quiet gap before read (%lums remaining)",
+             RS485_MIN_REQUEST_GAP_MS - (now - last_transaction_end_ms_));
+        return false;
+    }
+
     if (!initialized_ || waiting_response_) {
         LOGW(TAG, "Cannot send request: %s",
              !initialized_ ? "not initialized" : "waiting for response");
@@ -185,6 +207,7 @@ bool RS485Manager::send_read_request(ModbusFunctionCode func, uint16_t start_reg
 
     expected_function_code_ = func;
     expected_start_reg_ = start_reg;
+    expected_register_count_ = count;
     send_packet(packet);
     return true;
 }
@@ -199,6 +222,14 @@ bool RS485Manager::send_write_request(uint16_t start_reg, const std::vector<uint
         return false;
     }
     // ========== END BUS BUSY CHECK ==========
+
+    const uint32_t now = millis();
+    if (last_transaction_end_ms_ != 0 &&
+        (now - last_transaction_end_ms_) < RS485_MIN_REQUEST_GAP_MS) {
+        LOGD(TAG, "Waiting for RS485 quiet gap before write (%lums remaining)",
+             RS485_MIN_REQUEST_GAP_MS - (now - last_transaction_end_ms_));
+        return false;
+    }
 
     if (!initialized_ || waiting_response_) {
         LOGW(TAG, "Cannot send request: %s",
@@ -238,6 +269,7 @@ bool RS485Manager::send_write_request(uint16_t start_reg, const std::vector<uint
     expected_function_code_ =
         (values.size() == 1) ? ModbusFunctionCode::WRITE_SINGLE : ModbusFunctionCode::WRITE_MULTI;
     expected_start_reg_ = start_reg;
+    expected_register_count_ = values.size();
     send_packet(packet);
     return true;
 }
@@ -245,6 +277,13 @@ bool RS485Manager::send_write_request(uint16_t start_reg, const std::vector<uint
 void RS485Manager::send_packet(const std::vector<uint8_t>& packet) {
     LOGD(TAG, "   TX raw [%d bytes]: %s", packet.size(),
          InverterProtocol::format_hex(packet.data(), packet.size()).c_str());
+
+    // Drop stale bytes before starting a new request. The bridge serializes
+    // requests, so any RX data here belongs to previous traffic/noise.
+    while (serial_->available() > 0) {
+        serial_->read();
+    }
+    rx_buffer_.clear();
 
     // Switch to transmit mode
     if (de_pin_ >= 0) {
@@ -335,7 +374,16 @@ void RS485Manager::process_incoming_data() {
         return;
     }
 
-    if (InverterProtocol::is_valid_response(rx_buffer_.data(), rx_buffer_.size())) {
+    const bool starts_with_response =
+        InverterProtocol::is_valid_response(rx_buffer_.data(), rx_buffer_.size());
+    bool contains_response = starts_with_response;
+    if (!contains_response) {
+        std::vector<FrameInfo> frames = InverterProtocol::parse_all_frames(rx_buffer_);
+        contains_response = std::any_of(frames.begin(), frames.end(),
+                                        [](const FrameInfo& frame) { return !frame.is_request; });
+    }
+
+    if (contains_response) {
         handle_response(rx_buffer_);
     } else {
         handle_invalid_frame();
@@ -343,11 +391,19 @@ void RS485Manager::process_incoming_data() {
 
     rx_buffer_.clear();
     waiting_response_ = false;
+    last_transaction_end_ms_ = millis();
 }
 
 void RS485Manager::handle_invalid_frame() {
     LOGW(TAG, "RX [%d bytes] - INVALID: %s", rx_buffer_.size(),
          InverterProtocol::format_hex(rx_buffer_.data(), rx_buffer_.size()).c_str());
+
+    last_result_ = ParseResult();
+    last_result_.success = false;
+    last_result_.function_code = expected_function_code_;
+    last_result_.start_address = expected_start_reg_;
+    last_result_.error_message = "Invalid response frame";
+    last_raw_response_ = rx_buffer_;
 
     // Try to recover by finding valid response start (0x01)
     for (size_t i = 1; i < rx_buffer_.size() - 1; i++) {
@@ -400,8 +456,8 @@ void RS485Manager::handle_response(const std::vector<uint8_t>& data) {
     }
 
     // Find our response
-    int idx = InverterProtocol::find_matching_response_index(frames, expected_function_code_,
-                                                             expected_start_reg_);
+    int idx = InverterProtocol::find_matching_response_index(
+        frames, expected_function_code_, expected_start_reg_, expected_register_count_);
 
     if (idx >= 0) {
         const FrameInfo& our_frame = frames[idx];
@@ -422,14 +478,19 @@ void RS485Manager::handle_response(const std::vector<uint8_t>& data) {
 void RS485Manager::handle_response_not_found(const std::vector<FrameInfo>& frames) {
     last_result_.success = false;
     last_result_.error_message = "Response not found (traffic from other master?)";
+    last_result_.function_code = expected_function_code_;
+    last_result_.start_address = expected_start_reg_;
+    last_result_.register_count = expected_register_count_;
 
-    LOGW(TAG, "Could not find our response (expected func=0x%02X start=%d)",
-         static_cast<uint8_t>(expected_function_code_), expected_start_reg_);
+    LOGW(TAG, "Could not find our response (expected func=0x%02X start=%d count=%d)",
+         static_cast<uint8_t>(expected_function_code_), expected_start_reg_,
+         expected_register_count_);
 
     for (const auto& f : frames) {
         if (!f.is_request) {
-            LOGW(TAG, "   Found: func=0x%02X start=%d (not ours)",
-                 static_cast<uint8_t>(f.result.function_code), f.result.start_address);
+            LOGW(TAG, "   Found: func=0x%02X start=%d count=%d (not ours)",
+                 static_cast<uint8_t>(f.result.function_code), f.result.start_address,
+                 f.result.register_count);
         }
     }
 }
@@ -527,6 +588,7 @@ void RS485Manager::handle_timeout() {
          successful_responses_);
 
     waiting_response_ = false;
+    last_transaction_end_ms_ = millis();
     last_result_.success = false;
     last_result_.error_message = "Timeout";
     last_raw_response_.clear();

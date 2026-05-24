@@ -279,22 +279,20 @@ void TCPServer::handle_client_data(void* arg, AsyncClient* client, void* data, s
     TCPClient* tcp_client = server->find_client(client);
 
     if (!tcp_client) {
-        LOGW(TAG, "Received %d bytes from unknown client (already removed)", len);
+        LOGD(TAG, "Late RX from unknown client already removed (%u bytes)", (unsigned) len);
         return;
     }
 
     // Skip if client is pending removal or disconnected
     if (tcp_client->pending_removal) {
-        LOGW(TAG, "Ignoring %d bytes from client %s pending removal", len,
-             tcp_client->remote_ip.c_str());
+        LOGD(TAG, "Late RX from client %s pending removal (%u bytes)",
+             tcp_client->remote_ip.c_str(), (unsigned) len);
         return;
     }
 
     if (!client || !client->connected()) {
-        uint8_t* bytes = static_cast<uint8_t*>(data);
-        LOGW(TAG, "Received %d bytes from disconnected client %s:", len,
-             tcp_client->remote_ip.c_str());
-        LOGW(TAG, "   Data: %s", TcpProtocol::format_hex(bytes, len).c_str());
+        LOGD(TAG, "Late RX after disconnect from %s (%u bytes), dropping",
+             tcp_client->remote_ip.c_str(), (unsigned) len);
         tcp_client->pending_removal = true; // Mark for cleanup
         return;
     }
@@ -448,12 +446,6 @@ void TCPServer::process_client_data(TCPClient* tcp_client) {
 
     LOGD(TAG, "Processing buffer: %u bytes", (unsigned) tcp_client->rx_buffer.size());
 
-    if (bridge_->is_busy()) {
-        LOGD(TAG, "Bridge busy; keeping %u buffered byte(s) for later",
-             (unsigned) tcp_client->rx_buffer.size());
-        return;
-    }
-
     if (tcp_client->rx_buffer.size() < TCP_FRAME_HEADER_SIZE) {
         LOGD(TAG, "Waiting for TCP header (have %u, need %u)",
              (unsigned) tcp_client->rx_buffer.size(), (unsigned) TCP_FRAME_HEADER_SIZE);
@@ -502,9 +494,9 @@ void TCPServer::process_client_data(TCPClient* tcp_client) {
     LOGI(TAG, "→ Forwarding %u byte frame to bridge from %s", (unsigned) frame.size(),
          tcp_client->remote_ip.c_str());
 
-    // Try to parse and forward to bridge
-    // The bridge will handle the packet and send response back
-    // (Bridge will acquire TCP_CLIENT_PROCESSING guard for coordination)
+    // Forward one framed request to the bridge worker queue. The RS485 side is
+    // serialized by ProtocolBridge; TCP can keep framing subsequent coalesced
+    // requests without waiting for the current inverter round-trip.
     bridge_->process_wifi_request(frame.data(), frame.size(), tcp_client);
 
     // Remove only the bytes consumed by this frame; any coalesced TCP frame
@@ -614,7 +606,14 @@ void TCPServer::check_client_timeouts() {
 
     for (auto it = clients_.begin(); it != clients_.end();) {
         // Calculate idle time, handling uint32_t wraparound
-        const uint32_t idle_time = now - it->last_activity;
+        const int32_t idle_delta = static_cast<int32_t>(now - it->last_activity);
+        if (idle_delta < 0) {
+            // AsyncTCP callbacks can update last_activity while this loop is running.
+            // Treat a tiny "future" timestamp as fresh instead of expiring the client.
+            ++it;
+            continue;
+        }
+        const uint32_t idle_time = static_cast<uint32_t>(idle_delta);
 
         if (idle_time > CLIENT_TIMEOUT_MS) {
             LOGW(TAG, "Client timeout: %s (idle for %u ms)", it->remote_ip.c_str(), idle_time);

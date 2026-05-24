@@ -22,8 +22,6 @@ const char* OperationGuardManager::getOperationTypeName(OperationGuard::Operatio
             return "TCP";
         case OperationGuard::OperationType::RS485_OPERATION:
             return "RS485";
-        case OperationGuard::OperationType::NETWORK_VALIDATION:
-            return "NET_VALID";
         case OperationGuard::OperationType::WIFI_SCAN:
             return "WiFi_SCAN";
         case OperationGuard::OperationType::OTA_OPERATION:

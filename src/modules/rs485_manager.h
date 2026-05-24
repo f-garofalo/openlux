@@ -63,6 +63,8 @@ class RS485Manager {
     uint32_t get_failed_responses() const { return failed_responses_; }
     uint32_t get_timeout_count() const { return timeout_count_; }
     uint32_t get_ignored_packets() const { return ignored_packets_; }
+    uint32_t get_external_requests_detected() const { return external_requests_detected_; }
+    uint32_t get_bus_busy_remaining_ms() const;
 
   private:
     RS485Manager() = default;
@@ -107,8 +109,10 @@ class RS485Manager {
     bool waiting_response_ = false;
     ModbusFunctionCode expected_function_code_ = ModbusFunctionCode::READ_INPUT;
     uint16_t expected_start_reg_ = 0;
+    uint16_t expected_register_count_ = 0;
     unsigned long last_tx_time_ = 0;
     unsigned long last_rx_time_ = 0;
+    unsigned long last_transaction_end_ms_ = 0;
 
     // ========== Buffers ==========
     std::vector<uint8_t> rx_buffer_;

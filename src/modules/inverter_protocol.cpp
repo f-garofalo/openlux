@@ -214,9 +214,24 @@ bool InverterProtocol::create_write_request(std::vector<uint8_t>& packet, uint16
 // ============================================================================
 
 bool InverterProtocol::is_request(const uint8_t* data, size_t length) {
-    if (length < 1)
+    if (length < MODBUS_MIN_REQUEST_SIZE)
         return false;
-    return data[0] == MODBUS_DEVICE_ADDR_REQUEST;
+
+    if (data[InverterProtocolOffsets::ADDR] != MODBUS_DEVICE_ADDR_REQUEST)
+        return false;
+
+    const uint8_t func = data[InverterProtocolOffsets::FUNC];
+    if (func != static_cast<uint8_t>(ModbusFunctionCode::READ_HOLDING) &&
+        func != static_cast<uint8_t>(ModbusFunctionCode::READ_INPUT) &&
+        func != static_cast<uint8_t>(ModbusFunctionCode::WRITE_SINGLE) &&
+        func != static_cast<uint8_t>(ModbusFunctionCode::WRITE_MULTI)) {
+        return false;
+    }
+
+    const uint16_t calculated_crc = calculate_crc16(data, InverterProtocolOffsets::CRC_MIN_PACKET);
+    const uint16_t received_crc =
+        parse_little_endian_uint16(data, InverterProtocolOffsets::CRC_MIN_PACKET);
+    return calculated_crc == received_crc;
 }
 
 bool InverterProtocol::is_valid_response(const uint8_t* data, size_t length) {
@@ -298,6 +313,9 @@ static ParseResult parse_exception_response(const uint8_t* data, size_t length) 
                 break;
             case 0x04:
                 exception_msg = "Slave device failure";
+                break;
+            case 0x0B:
+                exception_msg = "Gateway Target Device Failed to Respond";
                 break;
             default:
                 exception_msg = "Unknown exception";
@@ -393,7 +411,7 @@ static ParseResult parse_read_response(const uint8_t* data, size_t length, uint8
              calculated_crc, received_crc);
         LOGW(TAG, "   Packet [%d bytes]: %s", length,
              InverterProtocol::format_hex(data, std::min(length, (size_t) 32)).c_str());
-        // Continue parsing anyway - sometimes CRC errors are transient
+        return result;
     }
 
     // Extract register values
@@ -444,6 +462,7 @@ static ParseResult parse_write_single_response(const uint8_t* data, size_t lengt
         result.error_message = "CRC mismatch";
         LOGW(TAG, "%s: calculated=0x%04X, received=0x%04X", result.error_message.c_str(),
              calculated_crc, received_crc);
+        return result;
     }
 
     // Extract value
@@ -486,6 +505,7 @@ static ParseResult parse_write_multi_response(const uint8_t* data, size_t length
         result.error_message = "CRC mismatch";
         LOGW(TAG, "%s: calculated=0x%04X, received=0x%04X", result.error_message.c_str(),
              calculated_crc, received_crc);
+        return result;
     }
 
     // Response includes only count confirmation (no values)
@@ -600,8 +620,9 @@ std::vector<FrameInfo> InverterProtocol::parse_all_frames(const std::vector<uint
         const size_t remaining = data.size() - offset;
         const uint8_t addr = frame_start[0];
 
-        // Handle request (addr=0x00)
-        if (addr == MODBUS_DEVICE_ADDR_REQUEST) {
+        // Handle request (addr=0x00). Validate CRC so zero-filled payload data
+        // is not misclassified as external-master request traffic.
+        if (addr == MODBUS_DEVICE_ADDR_REQUEST && is_request(frame_start, remaining)) {
             size_t frame_len = calculate_frame_length(frame_start, remaining);
             if (frame_len > 0 && frame_len <= remaining) {
                 FrameInfo info = {offset, frame_len, true, {}};
@@ -625,9 +646,11 @@ std::vector<FrameInfo> InverterProtocol::parse_all_frames(const std::vector<uint
                 info.is_request = false;
                 info.result = parse_response(frame_start, frame_len);
                 frames.push_back(info);
-                LOGD(TAG, "Frame[%d]: RESPONSE at offset %d, len=%d, func=0x%02X, start=%d",
+                LOGD(TAG,
+                     "Frame[%d]: RESPONSE at offset %d, len=%d, func=0x%02X, start=%d, regs=%d",
                      frames.size() - 1, offset, frame_len,
-                     static_cast<uint8_t>(info.result.function_code), info.result.start_address);
+                     static_cast<uint8_t>(info.result.function_code), info.result.start_address,
+                     info.result.register_count);
                 offset += frame_len;
             } else {
                 offset++;
@@ -648,7 +671,8 @@ std::vector<FrameInfo> InverterProtocol::parse_all_frames(const std::vector<uint
  */
 int InverterProtocol::find_matching_response_index(const std::vector<FrameInfo>& frames,
                                                    ModbusFunctionCode expected_func,
-                                                   uint16_t expected_start_reg) {
+                                                   uint16_t expected_start_reg,
+                                                   uint16_t expected_register_count) {
     for (size_t i = 0; i < frames.size(); i++) {
         const FrameInfo& frame = frames[i];
 
@@ -656,7 +680,9 @@ int InverterProtocol::find_matching_response_index(const std::vector<FrameInfo>&
             continue;
 
         if (frame.result.success && frame.result.function_code == expected_func &&
-            frame.result.start_address == expected_start_reg) {
+            frame.result.start_address == expected_start_reg &&
+            (expected_register_count == 0 ||
+             frame.result.register_count == expected_register_count)) {
             return static_cast<int>(i);
         }
     }

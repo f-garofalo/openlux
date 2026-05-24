@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - Placeholder for future changes.
 
+## [2.0.0] - 2026-05-24
+### Added
+- **RS485 worker queue**: TCP requests are now parsed and queued, while a single bridge worker serializes all inverter access.
+- **Bridge request state machine**: each active request moves through explicit worker states (`QUEUED`, `RS485_SEND`, `RS485_RETRY`, `WAIT_RESPONSE`, `CACHE_FALLBACK`, `RESPOND_TCP`, `DONE`, `FAILED`) for clearer diagnostics.
+- **Bridge queue diagnostics**: `status` now reports worker state, active request id, queue depth, queued requests, queue drops, client-disconnect drops, and the last completed request outcome.
+- **RS485 coexistence pressure window**: after repeated contention/corruption events, OpenLux can briefly prefer fresh cached read responses instead of immediately adding more traffic to the bus.
+- **Coexistence diagnostics**: status output includes `coex_events`, `coex_cache`, `coex_stale`, and `coex_miss` counters to show whether the coexistence path is actually being used.
+
+### Changed
+- **TCP framing decoupled from RS485 round-trip**: the TCP server no longer stops framing client data just because the bridge is busy; complete frames are handed to the worker queue and consumed one at a time by the RS485 side.
+- **Bridge busy handling**: close/reject behavior is now reserved for pause, blocking maintenance operations, invalid frames, or queue-full pressure instead of normal in-flight RS485 requests.
+- **Fixed-size bridge queue**: the worker queue uses a bounded ring buffer instead of a dynamic STL deque, reducing heap churn on the ESP32.
+- **Fallback cache housekeeping**: cache eviction now uses last-access time consistently and cache invalidation counters include evictions/manual clears.
+- **WiFi link is now authoritative**: removed periodic active probes to MQTT and gateway ports from the network connection check.
+- **WiFi watchdog cleanup**: runtime recovery now has a single clear path (`reconnect` after 2 minutes, WiFi interface restart after 5 minutes, device reboot after 10 minutes).
+- **RS485 pacing**: serialized inverter requests keep a 120ms quiet gap between transactions to reduce corrupted responses during polling bursts.
+- **Fallback cache headroom**: cached read-response capacity is 14 entries.
+- **Fresh-cache coexistence policy**: during the coexistence pressure window, cached read responses must be fresh enough for active Home Assistant polling rather than using the longer fallback-cache TTL.
+- **Dual-dongle wording**: coexistence is treated as best-effort RS485 contention handling, not a guarantee that two masters can always share a noisy or improperly biased bus.
+
+### Fixed
+- **Protocol-compatible RS485 failure handling**: when an RS485 response is missing/mismatched and no fallback cache is available, OpenLux returns a Lux/Modbus exception `0x0B` (`Gateway Target Device Failed to Respond`) instead of immediately closing the Home Assistant TCP connection.
+- **RS485 full-frame reception**: enlarged the ESP32 UART RX ring buffer so 125-register Lux responses fit without overrunning the default serial buffer.
+- **CRC handling**: responses with CRC mismatch are no longer accepted as successful frames.
+- **RS485 request classification**: external-master request detection requires a valid function code and CRC, avoiding false request frames from response payloads.
+- **RS485 retry semantics**: an initially busy RS485 send now enters the retry path before using fallback cache.
+- **Count-aware RS485 response matching**: response correlation now matches function code, start register, and register count.
+- **Mismatch diagnostics**: response mismatch warnings include the expected and received register counts.
+- **TCP disconnect noise**: late bytes received after a TCP disconnect are logged at DEBUG instead of WARN.
+
 ## [1.1.0] - 2026-05-22
 ### Added
 - **WiFi diagnostics in status**: `status` now reports AP BSSID, power-save state, connect/disconnect counters, gateway validation state, and the last WiFi disconnect reason/age.
@@ -34,7 +64,7 @@ All notable changes to this project will be documented in this file.
 - **Network validation false negatives**: failed gateway/MQTT probes are diagnostics while the WiFi STA link remains associated, reducing spurious reconnects and avoidable `ASSOC_LEAVE` events.
 - **Gateway diagnostic reset on WiFi association**: when the ESP32 reconnects to the AP, the gateway reachability flag returns to optimistic `ok` until the next active validation.
 - **WiFi credentials source of truth**: firmware-configured WiFi credentials now take precedence over stale ESP32 NVS credentials, including reconnect and interface restart paths.
-- **OpenLux SSID config source**: `config/secrets.yaml` now matches the generated firmware header for the `Home-IoT-24` network.
+- **WiFi credentials source alignment**: generated firmware headers and local configuration now use the same credential source.
 - **WiFi power-save status accuracy**: the reported PS state now comes from the ESP-IDF WiFi driver after forcing `WIFI_PS_NONE`.
 - **Reconnect service reinitialization**: OTA and mDNS setup are now idempotent across WiFi reconnects, preventing repeated setup failures after link recovery.
 - **Auth-failure reconnect dampening**: repeated WiFi auth/association disconnect events now defer explicit reconnect scans briefly, reducing reconnect storms while the ESP32 WiFi stack is already retrying.

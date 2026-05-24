@@ -113,9 +113,10 @@ void CommandManager::registerCoreCommands() {
                         const auto& rs = RS485Manager::getInstance();
                         const auto& sys = SystemManager::getInstance();
                         const auto& tcp = TCPServer::getInstance();
+                        const auto& bridge = ProtocolBridge::getInstance();
 
                         String msg;
-                        msg.reserve(900);
+                        msg.reserve(1300);
                         msg += "Link: ";
                         msg += rs.is_inverter_link_up() ? "UP" : "DOWN";
                         msg += " [WEB-REQ#";
@@ -126,8 +127,10 @@ void CommandManager::registerCoreCommands() {
                         msg += String(rs.get_failed_responses());
                         msg += " TIMEOUT#";
                         msg += String(rs.get_timeout_count());
-                        msg += " IGNORATED#";
+                        msg += " IGNORED#";
                         msg += String(rs.get_ignored_packets());
+                        msg += " EXTERNAL#";
+                        msg += String(rs.get_external_requests_detected());
                         msg += "]";
                         msg += "\nRS485 SN: ";
                         msg += rs.get_detected_inverter_serial();
@@ -205,8 +208,6 @@ void CommandManager::registerCoreCommands() {
                         msg += String(net.getWiFiConnectCount());
                         msg += " disconnects=";
                         msg += String(net.getWiFiDisconnectCount());
-                        msg += " gateway=";
-                        msg += net.isGatewayReachable() ? "ok" : "fail";
                         msg += " last_connect_age=";
                         const uint32_t connect_age_ms = net.getLastWiFiConnectAgeMs();
                         msg += connect_age_ms == 0 ? String("never")
@@ -224,6 +225,30 @@ void CommandManager::registerCoreCommands() {
                             msg += "s";
                         }
 
+                        msg += "\nWiFi-WD: ";
+                        if (OPENLUX_USE_ETHERNET) {
+                            msg += "disabled(ETH)";
+                        } else {
+                            const uint32_t wd_down_ms = net.getWiFiWatchdogDownMs();
+                            if (wd_down_ms == 0) {
+                                msg += "OK";
+                            } else {
+                                const uint32_t reboot_delay_ms = net.getWiFiWatchdogRebootDelayMs();
+                                const uint32_t reboot_in_ms = wd_down_ms >= reboot_delay_ms
+                                                                  ? 0
+                                                                  : reboot_delay_ms - wd_down_ms;
+                                msg += "DOWN down_for=";
+                                msg += String(wd_down_ms / 1000);
+                                msg += "s reconnect=";
+                                msg += net.hasWiFiWatchdogReconnected() ? "done" : "pending";
+                                msg += " restart=";
+                                msg += net.hasWiFiWatchdogRestarted() ? "done" : "pending";
+                                msg += " reboot_in=";
+                                msg += String(reboot_in_ms / 1000);
+                                msg += "s";
+                            }
+                        }
+
                         msg += "\nTCP: ";
                         msg += tcp.is_running() ? "RUNNING" : "STOPPED";
                         msg += " accept=";
@@ -238,6 +263,48 @@ void CommandManager::registerCoreCommands() {
                         msg += String(tcp.get_listener_health_checks());
                         msg += " fail_streak=";
                         msg += String(tcp.get_listener_health_failures());
+
+                        msg += "\nBRIDGE: state=";
+                        msg += bridge.get_worker_state_name();
+                        msg += " active=#";
+                        msg += String(bridge.get_active_request_id());
+                        msg += " queue=";
+                        msg += String(bridge.get_queue_size());
+                        msg += "/";
+                        msg += String(bridge.get_queue_capacity());
+                        msg += " queued=";
+                        msg += String(bridge.get_queued_requests());
+                        msg += " drops=";
+                        msg += String(bridge.get_queue_drops());
+                        msg += " client_gone=";
+                        msg += String(bridge.get_client_gone_count());
+                        msg += " last=#";
+                        msg += String(bridge.get_last_finished_request_id());
+                        msg += "/";
+                        msg += bridge.get_last_terminal_state_name();
+                        msg += "/";
+                        msg += String(bridge.get_last_finished_elapsed_ms());
+                        msg += "ms";
+                        msg += " coex=";
+#if RS485_COEXISTENCE_ENABLED
+                        msg += String(bridge.get_coexistence_backoff_remaining_ms());
+                        msg += "ms";
+                        msg += " coex_pressure=";
+                        msg += String(bridge.get_coexistence_pressure_remaining_ms());
+                        msg += "ms";
+#else
+                        msg += "off";
+#endif
+                        msg += " coex_events=";
+                        msg += String(bridge.get_coexistence_event_count());
+                        msg += " coex_cache=";
+                        msg += String(bridge.get_coexistence_cache_hits());
+                        msg += " coex_stale=";
+                        msg += String(bridge.get_coexistence_cache_stale_count());
+                        msg += " coex_miss=";
+                        msg += String(bridge.get_coexistence_cache_miss_count());
+                        msg += " coex_seq=";
+                        msg += String(bridge.get_consecutive_contention_events());
 
 #ifdef ENABLE_WEB_DASH
                         {
@@ -604,7 +671,9 @@ void CommandManager::registerCoreCommands() {
                         out += "Fallback Cache Status:\n";
                         out += "  Size: ";
                         out += String(bridge.get_cache_size());
-                        out += " / 10 entries\n";
+                        out += " / ";
+                        out += String(bridge.get_cache_capacity());
+                        out += " entries\n";
                         out += "  Hits: ";
                         out += String(bridge.get_cache_hits());
                         out += "\n  Misses: ";

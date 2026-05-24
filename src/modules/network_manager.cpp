@@ -394,7 +394,6 @@ void NetworkManager::markBootSuccessful() {
 #if !OPENLUX_USE_ETHERNET
 bool NetworkManager::startProvisioningPortal() {
     LOGI(TAG, "Starting provisioning portal (AP)");
-    portal_opened_once_ = true;
 
     // Disable watchdog during blocking portal
     SystemManager::getInstance().disableWatchdog();
@@ -601,74 +600,6 @@ uint32_t NetworkManager::getLastWiFiConnectAgeMs() const {
     return millis() - last_wifi_connect_ms_;
 }
 
-bool NetworkManager::validateConnection() {
-    LOGI(TAG, "Starting validation connection check...");
-#if OPENLUX_USE_ETHERNET
-    if (!eth_connected_)
-        return false;
-    IPAddress gateway = ETH.gatewayIP();
-#else
-    if (WiFi.status() != WL_CONNECTED)
-        return false;
-    IPAddress gateway = WiFi.gatewayIP();
-#endif
-
-    if (gateway == IPAddress(0, 0, 0, 0)) {
-        LOGW(TAG, "Gateway IP is 0.0.0.0");
-        return true;
-    }
-
-    // Check if TCP operations are in progress - skip validation if they are
-    auto& guard_mgr = OperationGuardManager::getInstance();
-    if (!guard_mgr.canPerformOperation(OperationGuard::OperationType::NETWORK_VALIDATION)) {
-        LOGD(TAG, "Skipping connection validation: blocking operation in progress");
-        return gateway_reachable_; // Return last known state
-    }
-
-    {
-        auto guard = guard_mgr.acquireGuard(OperationGuard::OperationType::NETWORK_VALIDATION);
-
-        {
-            WiFiClient client;
-            client.setNoDelay(true);
-            client.setTimeout(100); // Reduced timeout
-            if (client.connect(gateway, 53, 100)) {
-                client.stop();
-                LOGD(TAG, "Connection validated via Gateway:53");
-                return true;
-            }
-        }
-
-#if defined(MQTT_HOST)
-        if (MQTT_HOST[0] != '\0') {
-            WiFiClient client;
-            client.setNoDelay(true);
-            client.setTimeout(50); // Reduced timeout
-            if (client.connect(MQTT_HOST, MQTT_PORT, 50)) {
-                client.stop();
-                LOGD(TAG, "Connection validated via MQTT broker");
-                return true;
-            }
-            LOGW(TAG, "Failed to connect to MQTT %s:%d, trying gateway:80", MQTT_HOST, MQTT_PORT);
-        }
-#endif
-
-        {
-            WiFiClient client;
-            client.setNoDelay(true);
-            client.setTimeout(50); // Reduced timeout
-            if (client.connect(gateway, 80, 50)) {
-                client.stop();
-                LOGD(TAG, "Connection validated via Gateway:80");
-                return true;
-            }
-            LOGW(TAG, "Failed to connect to gateway %s (ports 53, 80)", gateway.toString().c_str());
-        }
-    }
-
-    return false;
-}
-
 bool NetworkManager::isConnected() {
     if (isScanning()) {
         return was_connected_;
@@ -681,34 +612,7 @@ bool NetworkManager::isConnected() {
     link_up = (WiFi.status() == WL_CONNECTED);
 #endif
 
-    if (!link_up) {
-        // Link state is authoritative. Active gateway checks are diagnostics only.
-        gateway_reachable_ = false;
-        return false;
-    }
-
-    const uint32_t now = millis();
-    uint32_t validation_interval = VALIDATION_INTERVAL_MS;
-    if (!gateway_reachable_) {
-        validation_interval = VALIDATION_INTERVAL_MS * 3;
-    }
-
-    if (now - last_validation_ms_ > validation_interval) {
-        last_validation_ms_ = now;
-        const bool reachable = validateConnection();
-        if (reachable != gateway_reachable_) {
-            if (!reachable) {
-                LOGW(TAG, "Active connection check failed; keeping WiFi link up.");
-            } else {
-                LOGI(TAG, "Active connection check passed (recovered).");
-            }
-            gateway_reachable_ = reachable;
-        } else if (reachable) {
-            LOGD(TAG, "Active connection check passed.");
-        }
-    }
-
-    return true;
+    return link_up;
 }
 
 void NetworkManager::checkConnection() {
@@ -766,7 +670,8 @@ void NetworkManager::checkConnection() {
         roamingIfNeeded();
     }
 
-    // Connectivity watchdog: escalate reconnect → restart interface → reboot
+    // Connectivity watchdog: escalate reconnect -> restart interface -> reboot.
+    // Home Assistant silence is intentionally ignored; only WiFi link loss can trip this.
     bool can_recover = has_credentials || WiFi.SSID().length() > 0;
     if (!connected) {
         if (disconnected_since_ == 0) {
@@ -790,12 +695,6 @@ void NetworkManager::checkConnection() {
             watchdog_restart_done_ = true;
         }
 
-        if (can_recover && !portal_opened_once_ && down_ms >= WIFI_WATCHDOG_PORTAL_DELAY_MS &&
-            down_ms < WIFI_WATCHDOG_REBOOT_DELAY_MS) {
-            LOGW(TAG, "WiFi watchdog: opening provisioning portal after %lu ms downtime", down_ms);
-            startProvisioningPortal();
-        }
-
         if (can_recover && down_ms >= WIFI_WATCHDOG_REBOOT_DELAY_MS) {
             LOGE(TAG, "WiFi watchdog: rebooting after prolonged disconnect (%lu ms)", down_ms);
             rebootDevice("WiFi watchdog");
@@ -805,7 +704,6 @@ void NetworkManager::checkConnection() {
         disconnected_since_ = 0;
         watchdog_reconnect_done_ = false;
         watchdog_restart_done_ = false;
-        portal_opened_once_ = false;
     }
 }
 
@@ -911,7 +809,6 @@ void NetworkManager::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
             last_wifi_disconnect_ms_ = millis();
             last_wifi_disconnect_reason_ = info.wifi_sta_disconnected.reason;
             LOGW(TAG, "WiFi disconnect reason=%d", info.wifi_sta_disconnected.reason);
-            gateway_reachable_ = false;
             if (mdns_started_) {
                 MDNS.end();
                 mdns_started_ = false;
@@ -935,7 +832,6 @@ void NetworkManager::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
             logHeapStatus("sta_connected");
             wifi_connect_count_++;
             last_wifi_connect_ms_ = millis();
-            gateway_reachable_ = true;
             configureWiFiPowerSave();
             applyWiFiTxPower("sta connected");
             LOGI(TAG, "WiFi connected to AP %s on channel %u", WiFi.BSSIDstr().c_str(),

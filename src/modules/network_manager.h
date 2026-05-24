@@ -62,7 +62,6 @@ class NetworkManager {
 
     // WiFi status
     bool isConnected();
-    bool isGatewayReachable() const { return gateway_reachable_; }
 #if OPENLUX_USE_ETHERNET
     IPAddress getIP() const { return ETH.localIP(); }
     String getSSID() const { return String("ETH"); }
@@ -87,6 +86,12 @@ class NetworkManager {
     const char* getLastWiFiDisconnectReasonName() const;
     uint32_t getLastWiFiDisconnectAgeMs() const;
     uint32_t getLastWiFiConnectAgeMs() const;
+    uint32_t getWiFiWatchdogDownMs() const {
+        return disconnected_since_ == 0 ? 0 : millis() - disconnected_since_;
+    }
+    uint32_t getWiFiWatchdogRebootDelayMs() const { return WIFI_WATCHDOG_REBOOT_DELAY_MS; }
+    bool hasWiFiWatchdogReconnected() const { return watchdog_reconnect_done_; }
+    bool hasWiFiWatchdogRestarted() const { return watchdog_restart_done_; }
 
     // OTA configuration
     void setupOTA(const char* hostname, const char* password, uint16_t port = 3232);
@@ -105,7 +110,6 @@ class NetworkManager {
     bool startProvisioningPortal();        // start AP portal for WiFi config (blocking)
     void clearCredentials();               // wipe stored WiFi credentials (NVS)
     void markBootSuccessful();             // reset boot failure counter
-    bool validateConnection();             // Active check (TCP connect to gateway)
 
     // Callbacks
     void onConnected(const NetworkConnectedCallback& callback) { on_connected_ = callback; }
@@ -153,7 +157,6 @@ class NetworkManager {
 
     bool was_connected_ = false;
     bool ota_enabled_ = false;
-    bool portal_opened_once_ = false;
     bool boot_failures_loaded_ = false;
     bool mdns_started_ = false;
     bool use_ethernet_ = false;
@@ -163,10 +166,7 @@ class NetworkManager {
     uint32_t disconnected_since_ = 0;
     bool watchdog_reconnect_done_ = false;
     bool watchdog_restart_done_ = false;
-    bool watchdog_portal_done_ = false;
     uint32_t last_scan_ms_ = 0;
-    uint32_t last_validation_ms_ = 0;
-    bool gateway_reachable_ = true;
     uint8_t boot_failures_ = 0;
     bool wifi_power_save_disabled_ = false;
     uint32_t wifi_connect_count_ = 0;
@@ -188,8 +188,6 @@ class NetworkManager {
 
     static constexpr uint32_t CONNECT_RETRY_DELAY = 5000; // 5 seconds
     static constexpr uint32_t STATUS_LOG_INTERVAL = 5 * 60 * 1000;
-    static constexpr uint32_t VALIDATION_INTERVAL_MS = 3 * 60 * 1000;
-
     void logHeapStatus(const char* context);
 #if OPENLUX_USE_ETHERNET
     void handleEthernetEvent(WiFiEvent_t event, WiFiEventInfo_t info);
