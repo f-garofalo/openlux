@@ -33,6 +33,11 @@ struct TCPClient {
     std::vector<uint8_t> rx_buffer;
     uint32_t last_activity = 0;
     bool pending_removal = false; // Mark for safe removal during loop
+    bool close_requested = false;
+    bool close_issued = false;
+    uint32_t pending_since_ms = 0;
+    uint32_t close_issued_at_ms = 0;
+    String close_reason;
 
     bool is_connected() const {
         return client != nullptr && client->connected() && !pending_removal;
@@ -49,7 +54,7 @@ class TCPServer {
     static TCPServer& getInstance();
 
     // Lifecycle
-    void begin(uint16_t port, size_t max_clients = 5);
+    void begin(uint16_t port, size_t max_clients = 3);
     void loop();
     void stop();
 
@@ -80,6 +85,7 @@ class TCPServer {
     // the TCPClient entry itself lives in a std::vector that can move, so
     // always resolve through this method immediately before use.
     TCPClient* resolve_client(const AsyncClient* async_client);
+    void request_client_close(AsyncClient* async_client, const char* reason);
 
     // Statistics
     uint32_t get_total_connections() const { return total_connections_; }
@@ -104,21 +110,23 @@ class TCPServer {
     static void handle_client_timeout(void* arg, AsyncClient* client, uint32_t time);
 
     // Internal methods
-    void add_client(AsyncClient* client);
+    void add_client(AsyncClient* client, bool pending_close = false,
+                    const char* close_reason = nullptr);
     void remove_client(AsyncClient* client);
     void cleanup_pending_clients();
     TCPClient* find_client(const AsyncClient* client);
+    void mark_client_for_removal(TCPClient& tcp_client, const char* reason, bool request_close);
     void process_client_data(TCPClient* tcp_client);
     void check_client_timeouts();
     void check_listener_health();
     bool run_listener_self_probe();
     bool is_self_probe_client(const AsyncClient* client) const;
     void restart_listener(const char* reason);
-    void destroy_client(AsyncClient* client);
+    bool destroy_client(AsyncClient* client);
 
     AsyncServer* server_ = nullptr;
     std::vector<TCPClient> clients_;
-    size_t max_clients_ = 5;
+    size_t max_clients_ = 3;
     uint16_t port_ = 8000;
     ProtocolBridge* bridge_ = nullptr;
     bool accepting_connections_ = false;
@@ -135,7 +143,9 @@ class TCPServer {
     uint32_t last_listener_restart_ms_ = 0;
 
     // Timeout settings
-    static constexpr uint32_t CLIENT_TIMEOUT_MS = 300000;  // 5 minutes idle before disconnect
+    static constexpr uint32_t CLIENT_TIMEOUT_MS = 300000; // 5 minutes idle before disconnect
+    static constexpr uint32_t CLIENT_DESTROY_GRACE_MS = 250;
+    static constexpr uint32_t CLIENT_CLOSE_GRACE_MS = 2000;
     static constexpr uint32_t INTER_PACKET_DELAY_MS = 100; // 100ms between packets
     static constexpr uint32_t LISTENER_HEALTH_INTERVAL_MS = 15000;
     static constexpr uint32_t LISTENER_HEALTH_CONNECT_TIMEOUT_MS = 350;

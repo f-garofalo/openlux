@@ -34,7 +34,7 @@
 - ✅ **RS485 Communication** - Full Modbus RTU protocol support
 - ✅ **Protocol Translation** - Seamless WiFi ↔ RS485 conversion
 - ✅ **Read/Write Operations** - Full register access (0x03, 0x04, 0x06, 0x10)
-- ✅ **Multi-client** - Up to 5 simultaneous connections
+- ✅ **Multi-client** - Up to 3 simultaneous connections
 - ✅ **Minimal Web Dashboard** - Basic status + command runner on port 80 (with basic auth)
 - ✅ **Runtime Diagnostics** - Web/Telnet commands for status, TCP clients, cache, pause/resume, WiFi checks, and runtime log levels
 - ⚠️ **Dual Dongle / Coexistence Mode** - Experimental best-effort mode for installations that keep the official dongle on the same RS485 bus
@@ -126,7 +126,7 @@ pio device monitor -b 115200
 After first upload, update wirelessly:
 
 ```bash
-#Uses espota; default upload host is openlux.local
+#Uses espota; default upload host is openlux
 pio run -e openlux -t upload
 
 #Or upload to a specific IP/hostname
@@ -137,7 +137,7 @@ pio run -e openlux -t upload --upload-port 192.168.1.58
 
 ## 🖥️ Web Dashboard (Port 80)
 
-- Access: `http://openlux.local` (or your device IP) on port `80`.
+- Access: `http://openlux` (or your device IP) on port `80`.
 - Auth: basic auth enabled by default with development credentials in `src/config.h`; change `WEB_DASH_USER`/`WEB_DASH_PASS` before exposing the device on a shared network.
 - Pages/APIs: minimal HTML dashboard at `/` with live status view (`/api/status`) and a simple command runner (`/api/cmd`) that forwards to the same command engine used by Telnet.
 - Purpose: quick troubleshooting (check status, inspect TCP clients/cache, adjust runtime log level, pause/resume the bridge) without needing Telnet/HA.
@@ -145,7 +145,7 @@ pio run -e openlux -t upload --upload-port 192.168.1.58
 Example command API call:
 
 ```bash
-curl -X POST 'http://openlux.local/api/cmd?cmd=status'
+curl -X POST 'http://openlux/api/cmd?cmd=status'
 ```
 
 Common runtime commands:
@@ -171,7 +171,7 @@ OpenLux works with the [LuxPower Modbus Integration](https://github.com/ant0nkr/
 **Quick Setup:**
 1. Install via HACS: `https://github.com/ant0nkr/luxpower-ha-integration`
 2. Add Integration → "LuxPower Inverter (Modbus)"
-3. Configure: IP (`openlux.local`), Port (`8000`), Serial Numbers
+3. Configure: IP (`openlux` or the device IPv4 address), Port (`8000`), Serial Numbers
 
 ### MQTT Sensors (Optional)
 If you enable MQTT in `config.h`, OpenLux will automatically create diagnostic sensors in Home Assistant via MQTT Auto-Discovery. These telemetry sensors include:
@@ -202,9 +202,9 @@ The sensors will appear automatically in Home Assistant under the MQTT integrati
 - Production builds compile runtime logging in (`OPENLUX_ENABLE_LOGGING=1`), so you can temporarily increase verbosity without reflashing:
 
 ```bash
-curl -X POST 'http://openlux.local/api/cmd?cmd=log_level%200'
-curl -X POST 'http://openlux.local/api/cmd?cmd=log_level%20tcp%200'
-curl -X POST 'http://openlux.local/api/cmd?cmd=log_level%20reset'
+curl -X POST 'http://openlux/api/cmd?cmd=log_level%200'
+curl -X POST 'http://openlux/api/cmd?cmd=log_level%20tcp%200'
+curl -X POST 'http://openlux/api/cmd?cmd=log_level%20reset'
 ```
 
 Log levels are `0=DEBUG`, `1=INFO`, `2=WARN`, `3=ERROR`, `4=NONE`.
@@ -264,7 +264,7 @@ pio run -e openlux-serial -t upload
 pio run -e openlux -t upload
 
 #Upload(OTA) to a specific host/IP
-pio run -e openlux -t upload --upload-port openlux.local
+pio run -e openlux -t upload --upload-port openlux
 
 #Debug build
 pio run -e openlux-debug -t upload
@@ -277,7 +277,7 @@ pio run -e openlux-debug -t upload
 pio device monitor -b 115200
 
 #WiFi monitor
-nc openlux.local 23
+nc openlux 23
 ```
 
 ---

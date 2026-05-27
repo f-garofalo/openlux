@@ -9,7 +9,7 @@
  * - Wi-Fi connection with static IP or DHCP
  * - OTA (Over-The-Air) firmware updates
  * - Serial logging + Telnet logging (port 23)
- * - mDNS (openlux.local)
+ * - Network hostname (openlux)
  * - NTP time synchronization
  * - RS485 communication with inverter
  * - TCP Server (port 8000) for Home Assistant
@@ -238,9 +238,12 @@ void setupWiFi() {
         Serial.println("============================================");
         Serial.println("         * BRIDGE READY AND ONLINE *       ");
         Serial.println("============================================");
-        Serial.printf("  Web:     http://%s.local\n", WIFI_HOSTNAME);
+        const String ip = NetworkManager::getInstance().getIP().toString();
+        Serial.printf("  Web:     http://%s\n", WIFI_HOSTNAME);
+        Serial.printf("  IPv4:    http://%s\n", ip.c_str());
 #ifdef ENABLE_TELNET
-        Serial.printf("  Telnet:  telnet %s.local\n", WIFI_HOSTNAME);
+        Serial.printf("  Telnet:  telnet %s\n", WIFI_HOSTNAME);
+        Serial.printf("  Telnet:  telnet %s\n", ip.c_str());
 #endif
 #ifdef ENABLE_OTA
         Serial.printf("  OTA:     Ready for updates\n");

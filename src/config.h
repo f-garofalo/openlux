@@ -66,7 +66,7 @@
 /**
  * @brief WiFi and Network Settings
  */
-#define WIFI_HOSTNAME "openlux"          ///< mDNS hostname (openlux.local)
+#define WIFI_HOSTNAME "openlux"          ///< Network hostname
 #define OTA_HOSTNAME "openlux"           ///< OTA update hostname
 #define OTA_PORT 3232                    ///< OTA update port
 #define WIFI_PORTAL_SSID "OpenLux-Setup" ///< SSID for first-boot WiFi portal
@@ -160,7 +160,7 @@
  * emulating the Official WiFi dongle protocol.
  */
 #define TCP_SERVER_PORT 8000
-#define TCP_MAX_CLIENTS 5                     ///< Maximum simultaneous clients
+#define TCP_MAX_CLIENTS 3                     ///< Maximum simultaneous clients
 #define TCP_CLIENT_TIMEOUT_MS (5 * 60 * 1000) ///< Client timeout (5 minutes)
 
 /**

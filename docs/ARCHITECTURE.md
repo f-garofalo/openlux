@@ -50,7 +50,7 @@ OpenLux ESP32 Firmware
 │   └── CommandManager      → CLI commands via Telnet/Serial/Web API
 │
 ├── Core Services (src/modules/)
-│   ├── NetworkManager      → WiFi/Ethernet, OTA updates, mDNS
+│   ├── NetworkManager      → WiFi/Ethernet, OTA updates, hostname/mDNS
 │   ├── Logger              → Dual output (Serial + Telnet on port 23)
 │   └── NTPManager          → Time synchronization
 │
@@ -59,7 +59,7 @@ OpenLux ESP32 Firmware
 │   └── MqttManager         → MQTT telemetry + Home Assistant Auto-Discovery
 │
 ├── Communication Layer (src/modules/)
-│   ├── TCPServer           → Multi-client TCP server (port 8000, max 5)
+│   ├── TCPServer           → Multi-client TCP server (port 8000, max 3)
 │   ├── TCPProtocol         → WiFi protocol parser (A1 1A format)
 │   ├── RS485Manager        → UART communication, pacing, response collection
 │   └── InverterProtocol    → Inverter-specific protocol
@@ -103,7 +103,7 @@ OpenLux ESP32 Firmware
 **NetworkManager** (`network_manager.h/cpp`)
 - Manages WiFi or Ethernet connectivity based on `OPENLUX_USE_ETHERNET` flag
 - Handles OTA (Over-The-Air) firmware updates on port 3232
-- Provides mDNS service (openlux.local)
+- Provides the `openlux` network hostname and registers mDNS when available
 - Supports static IP or DHCP configuration
 - Implements WiFi captive portal for initial setup
 - Automatic reconnection with configurable watchdog timers
@@ -153,9 +153,11 @@ OpenLux ESP32 Firmware
 
 **TCPServer** (`tcp_server.h/cpp`)
 - Asynchronous TCP server on port 8000 (protocol-compatible dongle)
-- Multi-client support (up to 5 simultaneous connections)
+- Multi-client support (up to 3 simultaneous connections)
 - Per-client timeout management (5 minutes default)
 - Connection state tracking and cleanup
+- Central ownership of `AsyncClient` close/removal lifecycle
+- Deferred close/delete path: close requests are marked first, then clients are destroyed only after `AsyncClient::free()` reports it is safe
 - Integration with ProtocolBridge for packet forwarding
 
 **TCPProtocol** (`tcp_protocol.h/cpp`)
@@ -167,17 +169,17 @@ OpenLux ESP32 Firmware
 - Works over WiFi or Ethernet transparently
 
 **RS485Manager** (`rs485_manager.h/cpp`)
-- Hardware UART communication (Serial2 on ESP32)
+- Hardware UART communication (`Serial1` in the current ESP32 build)
 - Configurable TX/RX/DE pins
 - Modbus-like protocol implementation
-- Direction control (DE/RE pin) with auto-direction support
+- Direction control (DE/RE pin) with auto-direction support; the default build uses `RS485_DE_PIN=-1` for auto-direction/no explicit DE pin
 - 1024-byte UART RX ring buffer for full 125-register response frames
 - Request pacing with a 120ms quiet gap between serialized RS485 transactions
 - Response timeout defaults to 800ms
 - Multi-frame parsing support for buffers that contain unrelated bus traffic
 - Response matching by function code, start register, and register count
 - Frame validation with CRC checking
-- Inverter serial number detection and probing
+- Inverter serial number detection with on-demand/auto retry probing when the link is down
 
 **InverterProtocol** (`inverter_protocol.h/cpp`)
 - Inverter-specific protocol implementation
@@ -280,21 +282,22 @@ These mitigations do not replace correct RS485 wiring, termination, failsafe bia
 Default firmware settings live in `src/config.h`. Site-specific values should go in `src/secrets.h` or `src/config.local.h`; local credentials must not be committed to git.
 
 **Network Settings:**
-- `WIFI_HOSTNAME` - mDNS hostname (default: "openlux")
+- `WIFI_HOSTNAME` - Network hostname and mDNS label (default: "openlux")
 - `OPENLUX_USE_ETHERNET` - Enable Ethernet instead of WiFi (0=WiFi, 1=Ethernet)
 - `TCP_SERVER_PORT` - TCP server port (default: 8000, don't change!)
-- `TCP_MAX_CLIENTS` - Maximum simultaneous clients (default: 5)
+- `TCP_MAX_CLIENTS` - Maximum simultaneous clients (default: 3)
 - `WEB_DASH_PORT` - Web dashboard port (default: 80)
 
 **MQTT Settings** (if `ENABLE_MQTT` enabled):
-- `MQTT_BROKER` - MQTT broker IP/hostname
+- `MQTT_HOST` - MQTT broker IP/hostname
 - `MQTT_PORT` - MQTT broker port (default: 1883)
-- `MQTT_USERNAME` / `MQTT_PASSWORD` - MQTT credentials
+- `MQTT_USER` / `MQTT_PASS` - MQTT credentials
 - `MQTT_DISCOVERY_PREFIX` - Home Assistant MQTT discovery prefix (default: "homeassistant")
 - `MQTT_TOPIC_PREFIX` - Topic prefix for device topics (default: "openlux")
 
 **Hardware Configuration:**
 - `RS485_TX_PIN`, `RS485_RX_PIN`, `RS485_DE_PIN` - UART pins
+- `RS485_DE_PIN=-1` - Current default for auto-direction modules or modules without explicit DE/RE control
 - `RS485_BAUD_RATE` - Fixed at 19200 per inverter protocol specification
 - Ethernet PHY settings (if using Ethernet)
 
@@ -402,9 +405,9 @@ Output includes:
 
 Connect remotely:
 ```bash
-nc openlux.local 23
+nc openlux 23
 # or
-telnet openlux.local 23
+telnet openlux 23
 ```
 
 Features:
@@ -437,7 +440,7 @@ Available via Serial or Telnet:
 
 Access via browser:
 ```
-http://openlux.local
+http://openlux
 # or
 http://<device-ip>
 ```
@@ -476,9 +479,10 @@ Runtime logging can be changed without reflashing through `log_level`, for examp
 - PSRAM: Not required
 
 **Network**
-- TCP connections: Max 5 simultaneous clients
+- TCP connections: Max 3 simultaneous clients
 - Packet latency is dominated by the RS485 round-trip and Home Assistant polling pattern
 - Web status is cached briefly to reduce contention with the TCP/RS485 bridge path
+- TCP client shutdown is centralized in `TCPServer` so protocol errors, timeouts, and bridge failures all follow the same deferred `AsyncClient` cleanup path
 
 ### Stability
 
@@ -546,5 +550,5 @@ See [SECURITY.md](../SECURITY.md) for full security policy.
 ---
 
 **Document Version**: 2.0.0
-**Last Updated**: May 24, 2026
+**Last Updated**: May 27, 2026
 **License**: GPL-3.0

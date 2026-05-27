@@ -259,8 +259,7 @@ void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TC
     auto send_err = [&](const String& err) {
         if (client && client->is_connected() && client->client) {
             LOGW(TAG, "Error to %s: %s", client_ip.c_str(), err.c_str());
-            // Protocol error close: simplest safe action.
-            client->client->close();
+            tcp_server_->request_client_close(client->client, err.c_str());
         }
     };
 
@@ -444,7 +443,7 @@ void ProtocolBridge::drop_queued_requests(const char* reason) {
                                 ? tcp_server_->resolve_client(dropped.client_handle)
                                 : nullptr;
         if (client && client->client) {
-            client->client->close();
+            tcp_server_->request_client_close(client->client, reason);
         }
 
         LOGW(TAG, "[REQ#%u] Dropped queued request from %s: %s", dropped.id,
@@ -817,7 +816,7 @@ void ProtocolBridge::send_error_response(const String& error) {
     LOGW(TAG, "⚠ Cannot build gateway exception response, closing connection");
     client = resolve_current_client();
     if (client && client->client) {
-        client->client->close();
+        tcp_server_->request_client_close(client->client, "cannot build gateway exception");
     }
 }
 
