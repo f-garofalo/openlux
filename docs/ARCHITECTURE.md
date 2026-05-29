@@ -200,7 +200,7 @@ OpenLux ESP32 Firmware
 - CRC validation on both protocols
 - Register count validation (max 127 protocol register slots per request)
 - Serial number extraction and forwarding
-- Fallback read cache with 14 entries and a 10-minute maximum fallback age
+- Fallback read cache with 14 entries and a 45-second maximum fallback age
 - Coexistence pressure mode: after repeated bus contention/corruption, OpenLux can briefly back off and serve fresh cached read responses up to 45 seconds old
 - Protocol-compatible gateway exception (`0x0B`) when the inverter response is missing and no valid cache entry is available
 - Error handling and response generation

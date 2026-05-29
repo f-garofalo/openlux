@@ -289,5 +289,5 @@ class ProtocolBridge {
     static constexpr uint32_t RS485_SEND_RETRY_DELAY_MS = 120;
     static constexpr uint32_t RS485_SEND_RETRY_WINDOW_MS = 1600;
     static constexpr uint8_t RS485_SEND_MAX_RETRIES = 14;
-    static constexpr uint32_t FALLBACK_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+    static constexpr uint32_t FALLBACK_CACHE_MAX_AGE_MS = 45 * 1000;
 };

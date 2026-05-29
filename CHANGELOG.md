@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - Placeholder for future changes.
 
-## [2.0.0] - 2026-05-24
+## [2.0.0] - 2026-05-29
 ### Added
 - **RS485 worker queue**: TCP requests are now parsed and queued, while a single bridge worker serializes all inverter access.
 - **Bridge request state machine**: each active request moves through explicit worker states (`QUEUED`, `RS485_SEND`, `RS485_RETRY`, `WAIT_RESPONSE`, `CACHE_FALLBACK`, `RESPOND_TCP`, `DONE`, `FAILED`) for clearer diagnostics.
@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file.
 - **Fallback cache headroom**: cached read-response capacity is 14 entries.
 - **Fresh-cache coexistence policy**: during the coexistence pressure window, cached read responses must be fresh enough for active Home Assistant polling rather than using the longer fallback-cache TTL.
 - **Dual-dongle wording**: coexistence is treated as best-effort RS485 contention handling, not a guarantee that two masters can always share a noisy or improperly biased bus.
+- **Fallback cache freshness**: generic RS485 fallback cache responses now expire after 45 seconds instead of 10 minutes, so stale inverter data is rejected with a protocol exception rather than shown as current data.
 
 ### Fixed
 - **Protocol-compatible RS485 failure handling**: when an RS485 response is missing/mismatched and no fallback cache is available, OpenLux returns a Lux/Modbus exception `0x0B` (`Gateway Target Device Failed to Respond`) instead of immediately closing the Home Assistant TCP connection.
