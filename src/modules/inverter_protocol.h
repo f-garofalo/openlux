@@ -156,7 +156,8 @@ class InverterProtocol {
     static std::vector<FrameInfo> parse_all_frames(const std::vector<uint8_t>& data);
     static int find_matching_response_index(const std::vector<FrameInfo>& frames,
                                             ModbusFunctionCode expected_func,
-                                            uint16_t expected_start_reg);
+                                            uint16_t expected_start_reg,
+                                            uint16_t expected_register_count);
 
     // ========== Serial Number Helpers ==========
     static String serial_to_string(const uint8_t* serial);

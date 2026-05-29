@@ -66,7 +66,7 @@
 /**
  * @brief WiFi and Network Settings
  */
-#define WIFI_HOSTNAME "openlux"          ///< mDNS hostname (openlux.local)
+#define WIFI_HOSTNAME "openlux"          ///< Network hostname
 #define OTA_HOSTNAME "openlux"           ///< OTA update hostname
 #define OTA_PORT 3232                    ///< OTA update port
 #define WIFI_PORTAL_SSID "OpenLux-Setup" ///< SSID for first-boot WiFi portal
@@ -90,6 +90,10 @@
  * @brief WiFi TX Power
  *
  * Adjust transmission power to improve stability with certain APs.
+ *
+ * OpenLux normally sits close to the inverter/AP and does not need maximum
+ * output power. A mid-range TX power keeps airtime noise below the ESP32
+ * default while leaving enough uplink margin for AP authentication/association.
  * Options:
  * - WIFI_POWER_19_5dBm
  * - WIFI_POWER_19dBm
@@ -103,9 +107,9 @@
  * - WIFI_POWER_5dBm
  * - WIFI_POWER_2dBm
  * - WIFI_POWER_MINUS_1dBm
- * Comment if unsure to use default.
+ * Comment if unsure to use the Arduino/ESP-IDF default.
  */
-// #define WIFI_TX_POWER WIFI_POWER_8_5dBm
+#define WIFI_TX_POWER WIFI_POWER_15dBm
 
 /**
  * @brief Periodic WiFi Scan
@@ -156,7 +160,7 @@
  * emulating the Official WiFi dongle protocol.
  */
 #define TCP_SERVER_PORT 8000
-#define TCP_MAX_CLIENTS 5                     ///< Maximum simultaneous clients
+#define TCP_MAX_CLIENTS 3                     ///< Maximum simultaneous clients
 #define TCP_CLIENT_TIMEOUT_MS (5 * 60 * 1000) ///< Client timeout (5 minutes)
 
 /**
@@ -240,17 +244,17 @@
  * Example: force RS485 to DEBUG while keeping global INFO level.
  *   #define OPENLUX_LOG_LEVEL_RS485 0
  */
-#define OPENLUX_LOG_LEVEL_MAIN 1
+#define OPENLUX_LOG_LEVEL_MAIN 2
 #define OPENLUX_LOG_LEVEL_RS485 2
-#define OPENLUX_LOG_LEVEL_NETWORK 1
-#define OPENLUX_LOG_LEVEL_MQTT 1
+#define OPENLUX_LOG_LEVEL_NETWORK 2
+#define OPENLUX_LOG_LEVEL_MQTT 2
 #define OPENLUX_LOG_LEVEL_BRIDGE 2
 #define OPENLUX_LOG_LEVEL_TCP 2
-#define OPENLUX_LOG_LEVEL_SYSTEM 1
-#define OPENLUX_LOG_LEVEL_COMMAND 1
-#define OPENLUX_LOG_LEVEL_NTP 1
-#define OPENLUX_LOG_LEVEL_WEB 1
-#define OPENLUX_LOG_LEVEL_GUARD 1
+#define OPENLUX_LOG_LEVEL_SYSTEM 2
+#define OPENLUX_LOG_LEVEL_COMMAND 2
+#define OPENLUX_LOG_LEVEL_NTP 2
+#define OPENLUX_LOG_LEVEL_WEB 2
+#define OPENLUX_LOG_LEVEL_GUARD 2
 #define OPENLUX_LOG_LEVEL_PROTO 2
 
 /**
@@ -264,11 +268,19 @@
 #define WIFI_WATCHDOG_RESTART_DELAY_MS \
     (5 * 60 * 1000) ///< After this downtime, restart WiFi interface
 #define WIFI_WATCHDOG_REBOOT_DELAY_MS (10 * 60 * 1000) ///< After this downtime, reboot device
-#define WIFI_WATCHDOG_PORTAL_DELAY_MS \
-    (20 * 60 * 1000) ///< After this downtime, open provisioning portal (AP) once
 
 #define RS485_PROBE_BACKOFF_BASE_MS 5000           ///< Initial backoff for RS485 probe retry
 #define RS485_PROBE_BACKOFF_MAX_MS (5 * 60 * 1000) ///< Max backoff for RS485 probe retry
+#define RS485_UART_RX_BUFFER_SIZE 1024 ///< UART RX ring buffer for full 125-register frames
+#define RS485_MIN_REQUEST_GAP_MS 120   ///< Quiet time between serialized RS485 requests
+#define RS485_COEXISTENCE_ENABLED 1    ///< Enable dual-master coexistence backoff/cache mode
+#define RS485_COEXISTENCE_TRIGGER_EVENTS \
+    2 ///< Consecutive contention events before quiet-window backoff
+#define RS485_COEXISTENCE_BACKOFF_MS 8000 ///< Quiet window after detected RS485 contention
+#define RS485_COEXISTENCE_PRESSURE_WINDOW_MS \
+    20000 ///< Prefer fresh cache shortly after any contention event
+#define RS485_COEXISTENCE_CACHE_MAX_AGE_MS \
+    45000 ///< Max cached-data age served proactively while the bus is contested
 #define COMMAND_DEBOUNCE_MS 10000   ///< Debounce window for reboot/wifi_restart commands
 #define BOOT_FAIL_RESET_THRESHOLD 5 ///< After N failed boots, clear WiFi creds and open portal
 

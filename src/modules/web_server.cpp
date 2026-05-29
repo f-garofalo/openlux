@@ -140,22 +140,58 @@ void WebServerManager::handleStatus() {
     if (!requireAuth())
         return;
 
+    const uint32_t started_ms = millis();
+    status_request_count_++;
+
+    if (cached_status_json_.length() > 0 &&
+        (started_ms - cached_status_ms_) < STATUS_CACHE_TTL_MS) {
+        status_cache_hits_++;
+        server_.send(200, "application/json", cached_status_json_);
+        last_status_total_ms_ = millis() - started_ms;
+        if (last_status_total_ms_ > STATUS_SLOW_THRESHOLD_MS) {
+            status_slow_count_++;
+        }
+        return;
+    }
+
+    uint16_t http_status = 200;
+    const uint32_t build_started_ms = millis();
+    String json = buildStatusJson(http_status);
+    last_status_build_ms_ = millis() - build_started_ms;
+
+    if (http_status == 200) {
+        cached_status_json_ = json;
+        cached_status_ms_ = millis();
+    }
+
+    server_.send(http_status, "application/json", json);
+    last_status_total_ms_ = millis() - started_ms;
+    if (last_status_total_ms_ > STATUS_SLOW_THRESHOLD_MS) {
+        status_slow_count_++;
+    }
+}
+
+String WebServerManager::buildStatusJson(uint16_t& http_status) {
     // Reuse the existing status command to keep output in sync
     auto& cm = CommandManager::getInstance();
     auto res = cm.execute("!status");
 
     if (!res.ok) {
-        String err = String(R"({"ok":false,"message":")") + res.message + "\"}";
-        err.replace("\"", "\\\"");
-        err.replace("\n", "\\n");
-        server_.send(400, "application/json", err);
-        return;
+        http_status = 400;
+        String escaped = res.message;
+        escaped.replace("\\", "\\\\");
+        escaped.replace("\"", "\\\"");
+        escaped.replace("\n", "\\n");
+        String err = String(R"({"ok":false,"message":")") + escaped + "\"}";
+        return err;
     }
 
     // Build a simple JSON object from the status lines
+    http_status = 200;
     String msg = res.message;
     String json = "{";
     String raw = msg;
+    raw.replace("\\", "\\\\");
     raw.replace("\"", "\\\"");
     raw.replace("\n", "\\n");
     json += R"("raw":")" + raw + "\"";
@@ -175,6 +211,7 @@ void WebServerManager::handleStatus() {
             key.replace(' ', '_');
             key.replace('/', '_');
             String escVal = val;
+            escVal.replace("\\", "\\\\");
             escVal.replace("\"", "\\\"");
             escVal.replace("\n", "\\n");
             json += ",\"" + key + "\":\"" + escVal + "\"";
@@ -185,7 +222,7 @@ void WebServerManager::handleStatus() {
     }
 
     json += "}";
-    server_.send(200, "application/json", json);
+    return json;
 }
 
 void WebServerManager::handleCommand() {
@@ -206,6 +243,8 @@ void WebServerManager::handleCommand() {
 
     auto& cm = CommandManager::getInstance();
     auto res = cm.execute(cmd);
+    cached_status_json_ = "";
+    cached_status_ms_ = 0;
 
     String out = "{";
     out += "\"ok\":";

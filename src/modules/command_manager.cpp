@@ -16,14 +16,33 @@
 #include "rs485_manager.h"
 #include "system_manager.h"
 #include "tcp_server.h"
+#ifdef ENABLE_WEB_DASH
+#include "web_server.h"
+#endif
 
 #include <Esp.h>
 
+#include <cstdlib>
 #include <numeric>
 
 #include <WiFi.h>
 
 static const char* CMD_TAG = "cmd";
+
+static bool parseLogLevel(const String& value, int& out) {
+    char* end = nullptr;
+    const long parsed = strtol(value.c_str(), &end, 10);
+    if (end == value.c_str() || *end != '\0' || parsed < 0 || parsed > 4) {
+        return false;
+    }
+    out = static_cast<int>(parsed);
+    return true;
+}
+
+static String formatLogLevel(LogLevel level) {
+    const int raw = static_cast<int>(level);
+    return String(raw) + " (" + Logger::logLevelName(level) + ")";
+}
 
 CommandManager& CommandManager::getInstance() {
     static CommandManager instance;
@@ -93,9 +112,11 @@ void CommandManager::registerCoreCommands() {
                         const auto& net = NetworkManager::getInstance();
                         const auto& rs = RS485Manager::getInstance();
                         const auto& sys = SystemManager::getInstance();
+                        const auto& tcp = TCPServer::getInstance();
+                        const auto& bridge = ProtocolBridge::getInstance();
 
                         String msg;
-                        msg.reserve(300);
+                        msg.reserve(1300);
                         msg += "Link: ";
                         msg += rs.is_inverter_link_up() ? "UP" : "DOWN";
                         msg += " [WEB-REQ#";
@@ -106,8 +127,10 @@ void CommandManager::registerCoreCommands() {
                         msg += String(rs.get_failed_responses());
                         msg += " TIMEOUT#";
                         msg += String(rs.get_timeout_count());
-                        msg += " IGNORATED#";
+                        msg += " IGNORED#";
                         msg += String(rs.get_ignored_packets());
+                        msg += " EXTERNAL#";
+                        msg += String(rs.get_external_requests_detected());
                         msg += "]";
                         msg += "\nRS485 SN: ";
                         msg += rs.get_detected_inverter_serial();
@@ -119,6 +142,8 @@ void CommandManager::registerCoreCommands() {
                         if (!OPENLUX_USE_ETHERNET) {
                             msg += " (";
                             msg += net.getSSID();
+                            msg += ", BSSID ";
+                            msg += net.getBSSID();
                             msg += ", Channel ";
                             msg += String(net.getChannel());
                             msg += ", RSSI ";
@@ -142,6 +167,9 @@ void CommandManager::registerCoreCommands() {
                                 case 60:
                                     msg += "15";
                                     break;
+                                case 59:
+                                    msg += "14.75";
+                                    break;
                                 case 52:
                                     msg += "13";
                                     break;
@@ -151,6 +179,9 @@ void CommandManager::registerCoreCommands() {
                                 case 34:
                                 case 32:
                                     msg += "8.5";
+                                    break;
+                                case 33:
+                                    msg += "8.25";
                                     break;
                                 case 28:
                                     msg += "7";
@@ -168,8 +199,130 @@ void CommandManager::registerCoreCommands() {
                                     msg += String(pwr);
                                     break;
                             }
-                            msg += " dBm)";
+                            msg += " dBm, PS ";
+                            msg += net.isWiFiPowerSaveDisabled() ? "off" : "on";
+                            msg += ")";
                         }
+
+                        msg += "\nWiFi: connects=";
+                        msg += String(net.getWiFiConnectCount());
+                        msg += " disconnects=";
+                        msg += String(net.getWiFiDisconnectCount());
+                        msg += " last_connect_age=";
+                        const uint32_t connect_age_ms = net.getLastWiFiConnectAgeMs();
+                        msg += connect_age_ms == 0 ? String("never")
+                                                   : String(connect_age_ms / 1000) + "s";
+                        msg += " last_disc=";
+                        const uint8_t last_disc_reason = net.getLastWiFiDisconnectReason();
+                        if (last_disc_reason == 0) {
+                            msg += "none";
+                        } else {
+                            msg += net.getLastWiFiDisconnectReasonName();
+                            msg += "(";
+                            msg += String(last_disc_reason);
+                            msg += ") age=";
+                            msg += String(net.getLastWiFiDisconnectAgeMs() / 1000);
+                            msg += "s";
+                        }
+
+                        msg += "\nWiFi-WD: ";
+                        if (OPENLUX_USE_ETHERNET) {
+                            msg += "disabled(ETH)";
+                        } else {
+                            const uint32_t wd_down_ms = net.getWiFiWatchdogDownMs();
+                            if (wd_down_ms == 0) {
+                                msg += "OK";
+                            } else {
+                                const uint32_t reboot_delay_ms = net.getWiFiWatchdogRebootDelayMs();
+                                const uint32_t reboot_in_ms = wd_down_ms >= reboot_delay_ms
+                                                                  ? 0
+                                                                  : reboot_delay_ms - wd_down_ms;
+                                msg += "DOWN down_for=";
+                                msg += String(wd_down_ms / 1000);
+                                msg += "s reconnect=";
+                                msg += net.hasWiFiWatchdogReconnected() ? "done" : "pending";
+                                msg += " restart=";
+                                msg += net.hasWiFiWatchdogRestarted() ? "done" : "pending";
+                                msg += " reboot_in=";
+                                msg += String(reboot_in_ms / 1000);
+                                msg += "s";
+                            }
+                        }
+
+                        msg += "\nTCP: ";
+                        msg += tcp.is_running() ? "RUNNING" : "STOPPED";
+                        msg += " accept=";
+                        msg += tcp.is_accepting_connections() ? "yes" : "no";
+                        msg += " clients=";
+                        msg += String(tcp.get_client_count());
+                        msg += " restarts=";
+                        msg += String(tcp.get_listener_restart_count());
+                        msg += " health=";
+                        msg += String(tcp.get_listener_health_successes());
+                        msg += "/";
+                        msg += String(tcp.get_listener_health_checks());
+                        msg += " fail_streak=";
+                        msg += String(tcp.get_listener_health_failures());
+
+                        msg += "\nBRIDGE: state=";
+                        msg += bridge.get_worker_state_name();
+                        msg += " active=#";
+                        msg += String(bridge.get_active_request_id());
+                        msg += " queue=";
+                        msg += String(bridge.get_queue_size());
+                        msg += "/";
+                        msg += String(bridge.get_queue_capacity());
+                        msg += " queued=";
+                        msg += String(bridge.get_queued_requests());
+                        msg += " drops=";
+                        msg += String(bridge.get_queue_drops());
+                        msg += " client_gone=";
+                        msg += String(bridge.get_client_gone_count());
+                        msg += " last=#";
+                        msg += String(bridge.get_last_finished_request_id());
+                        msg += "/";
+                        msg += bridge.get_last_terminal_state_name();
+                        msg += "/";
+                        msg += String(bridge.get_last_finished_elapsed_ms());
+                        msg += "ms";
+                        msg += " coex=";
+#if RS485_COEXISTENCE_ENABLED
+                        msg += String(bridge.get_coexistence_backoff_remaining_ms());
+                        msg += "ms";
+                        msg += " coex_pressure=";
+                        msg += String(bridge.get_coexistence_pressure_remaining_ms());
+                        msg += "ms";
+#else
+                        msg += "off";
+#endif
+                        msg += " coex_events=";
+                        msg += String(bridge.get_coexistence_event_count());
+                        msg += " coex_cache=";
+                        msg += String(bridge.get_coexistence_cache_hits());
+                        msg += " coex_stale=";
+                        msg += String(bridge.get_coexistence_cache_stale_count());
+                        msg += " coex_miss=";
+                        msg += String(bridge.get_coexistence_cache_miss_count());
+                        msg += " coex_seq=";
+                        msg += String(bridge.get_consecutive_contention_events());
+
+#ifdef ENABLE_WEB_DASH
+                        {
+                            const auto& web = WebServerManager::getInstance();
+                            msg += "\nWEB: status_req=";
+                            msg += String(web.getStatusRequestCount());
+                            msg += " cache_hits=";
+                            msg += String(web.getStatusCacheHitCount());
+                            msg += " ttl=";
+                            msg += String(web.getStatusCacheTtlMs());
+                            msg += "ms last_build=";
+                            msg += String(web.getLastStatusBuildMs());
+                            msg += "ms last_total=";
+                            msg += String(web.getLastStatusTotalMs());
+                            msg += "ms slow=";
+                            msg += String(web.getStatusSlowCount());
+                        }
+#endif
 
                         msg += "\nHeap: ";
                         msg += String(sys.getFreeHeap());
@@ -193,6 +346,12 @@ void CommandManager::registerCoreCommands() {
 
                         msg += "\nSDK: ";
                         msg += sys.getSdkVersion();
+
+                        msg += "\nReset HW: ";
+                        msg += sys.getHardwareResetReason();
+                        msg += " (code ";
+                        msg += String(sys.getHardwareResetReasonCode());
+                        msg += ")";
 
                         msg += "\nFeatures: ";
 #ifdef BOARD_HAS_PSRAM
@@ -360,20 +519,73 @@ void CommandManager::registerCoreCommands() {
                         return CommandResult{true, out};
                     });
 
-    // log_level <0-4>
-    registerCommand("log_level", "Set log level 0=DEBUG,1=INFO,2=WARN,3=ERROR,4=NONE",
-                    [](const std::vector<String>& args) -> CommandResult {
-                        if (args.empty()) {
-                            int lvl = static_cast<int>(Logger::getInstance().getLogLevel());
-                            return CommandResult{true, "Current log level: " + String(lvl)};
-                        }
-                        int lvl = args[0].toInt();
-                        if (lvl < 0 || lvl > 4) {
-                            return CommandResult{false, "Level must be 0-4"};
-                        }
-                        Logger::getInstance().setLogLevel(static_cast<LogLevel>(lvl));
-                        return CommandResult{true, "Log level set to " + String(lvl)};
-                    });
+    // log_level [0-4|reset|<tag> <0-4>|clear <tag>]
+    registerCommand(
+        "log_level",
+        "Show/set log level: 0=DEBUG,1=INFO,2=WARN,3=ERROR,4=NONE; "
+        "also reset, clear <tag>, <tag> <level>",
+        [](const std::vector<String>& args) -> CommandResult {
+            auto& logger = Logger::getInstance();
+            if (args.empty()) {
+                String out;
+                out.reserve(140);
+                out += "Global log level: ";
+                out += formatLogLevel(logger.getGlobalLevel());
+                out += "\nModule overrides: ";
+                out += String(logger.getModuleOverrideCount());
+#if OPENLUX_ENABLE_LOGGING
+                out += "\nRuntime DEBUG/INFO/WARN logging: compiled in";
+#else
+                out += "\nRuntime DEBUG/INFO/WARN logging: compiled out";
+#endif
+                return CommandResult{true, out};
+            }
+
+            if (args[0].equalsIgnoreCase("reset")) {
+                logger.resetLogLevels();
+                return CommandResult{true, "Log levels reset to firmware defaults: global " +
+                                               formatLogLevel(logger.getGlobalLevel()) +
+                                               ", module overrides " +
+                                               String(logger.getModuleOverrideCount())};
+            }
+
+            if (args[0].equalsIgnoreCase("clear")) {
+                if (args.size() == 1) {
+                    logger.clearModuleLevels();
+                    return CommandResult{true, "All module log overrides cleared; global " +
+                                                   formatLogLevel(logger.getGlobalLevel())};
+                }
+                logger.clearModuleLevel(args[1].c_str());
+                return CommandResult{true, "Module log override cleared: " + args[1]};
+            }
+
+            int lvl = 0;
+            if (args.size() == 1) {
+                if (!parseLogLevel(args[0], lvl)) {
+                    return CommandResult{false, "Level must be 0-4"};
+                }
+                logger.setAllLevels(static_cast<LogLevel>(lvl));
+                String out = "Global log level set to " + formatLogLevel(logger.getGlobalLevel()) +
+                             "; module overrides cleared";
+#if !OPENLUX_ENABLE_LOGGING
+                if (lvl < static_cast<int>(LogLevel::ERROR)) {
+                    out += "\nWarning: DEBUG/INFO/WARN are compiled out in this firmware";
+                }
+#endif
+                return CommandResult{true, out};
+            }
+
+            if (args.size() == 2) {
+                if (!parseLogLevel(args[1], lvl)) {
+                    return CommandResult{false, "Level must be 0-4"};
+                }
+                logger.setModuleLevel(args[0].c_str(), static_cast<LogLevel>(lvl));
+                return CommandResult{true, "Module " + args[0] + " log level set to " +
+                                               formatLogLevel(static_cast<LogLevel>(lvl))};
+            }
+
+            return CommandResult{false, "Usage: log_level [0-4|reset|clear [tag]|<tag> <0-4>]"};
+        });
 
     // ntp_sync
     registerCommand("ntp_sync", "Force NTP synchronization now",
@@ -459,7 +671,9 @@ void CommandManager::registerCoreCommands() {
                         out += "Fallback Cache Status:\n";
                         out += "  Size: ";
                         out += String(bridge.get_cache_size());
-                        out += " / 10 entries\n";
+                        out += " / ";
+                        out += String(bridge.get_cache_capacity());
+                        out += " entries\n";
                         out += "  Hits: ";
                         out += String(bridge.get_cache_hits());
                         out += "\n  Misses: ";

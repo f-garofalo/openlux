@@ -1,11 +1,11 @@
 # OpenLux Network Bridge
 
-[![Version](https://img.shields.io/badge/Version-1.0.1-green.svg)](./src/config.h)
+[![Version](https://img.shields.io/badge/Version-2.0.0-green.svg)](./src/version.h)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![ESP32](https://img.shields.io/badge/ESP32-Supported-blue.svg)](https://www.espressif.com/en/products/socs/esp32)
 [![PlatformIO](https://img.shields.io/badge/PlatformIO-Ready-orange.svg)](https://platformio.org/)
 
-> **Open-source network bridge (WiFi/Ethernet) for Luxpower inverters** - Connect your Luxpower/EG4 inverter to Home Assistant without proprietary hardware!
+> **Open-source network bridge (WiFi/Ethernet) for Luxpower inverters** - Connect your Luxpower/EG4 inverter to Home Assistant through a local TCP-to-RS485 bridge.
 > **Status**: in active development/testing; so far tested only by the author. More field testing and scenarios are needed.
 > **Note**: for study/personal use only, not intended for sale.
 > **No affiliation**: This project is independent and not endorsed by LuxpowerTek. LuxpowerTek, and EG4 are trademarks of their respective owners. This project is not affiliated with, sponsored by, or endorsed by these companies.
@@ -14,10 +14,10 @@
 
 ## 🎯 Overview
 
-**OpenLux** is an ESP32-based firmware that implements a protocol-compatible (unofficial) WiFi dongle bridge, enabling direct communication between your solar inverter and Home Assistant. This open-source solution eliminates the need for proprietary hardware and provides full local control of your solar installation.
+**OpenLux** is an ESP32-based firmware that implements a protocol-compatible (unofficial) network dongle bridge, enabling direct communication between your solar inverter and Home Assistant. It can replace the official dongle in a local-only setup, or run in an experimental coexistence setup when you still need the official dongle/cloud path.
 
 **Why OpenLux?**
-- 🆓 Free & Open Source - No expensive proprietary dongles
+- 🆓 Free & Open Source - Local bridge firmware you can inspect and modify
 - 🔒 Local Control - No cloud dependencies
 - 🏡 Home Assistant Native - Seamless integration
 - 🔧 Fully Customizable - Modify and extend as needed
@@ -34,9 +34,10 @@
 - ✅ **RS485 Communication** - Full Modbus RTU protocol support
 - ✅ **Protocol Translation** - Seamless WiFi ↔ RS485 conversion
 - ✅ **Read/Write Operations** - Full register access (0x03, 0x04, 0x06, 0x10)
-- ✅ **Multi-client** - Up to 5 simultaneous connections
+- ✅ **Multi-client** - Up to 3 simultaneous connections
 - ✅ **Minimal Web Dashboard** - Basic status + command runner on port 80 (with basic auth)
-- ✅ **Dual Dongle Mode** - Can operate simultaneously with the official WiFi dongle using a breakout board
+- ✅ **Runtime Diagnostics** - Web/Telnet commands for status, TCP clients, cache, pause/resume, WiFi checks, and runtime log levels
+- ⚠️ **Dual Dongle / Coexistence Mode** - Experimental best-effort mode for installations that keep the official dongle on the same RS485 bus
 - ✅ **Smart WiFi Roaming** - Automatically connects to the strongest AP and periodically scans for better signals (mesh-friendly)
 - ✅ **MQTT Support** - Publishes telemetry (Status, Uptime, IP) available in Home Assistant (Auto-Discovery) and accepts remote commands (reboot, status)
 
@@ -44,12 +45,17 @@
 
 ## 🔌 Dual Dongle Operation
 
-OpenLux can now operate simultaneously with the original manufacturer's WiFi dongle. By using a custom breakout board (splitter), you can connect the official dongle to the inverter and tap into the RS485 signals (A/B/5V/GND) to feed them into OpenLux.
+OpenLux can be wired alongside the original manufacturer's WiFi dongle by using a breakout board/splitter and tapping the RS485 signals (A/B/5V/GND).
 
 This allows you to:
 - Keep the official cloud monitoring and app functionality active.
 - Use OpenLux for local Home Assistant integration at the same time.
-- OpenLux is smart enough to ignore the official dongle's traffic and only respond to its own requests, avoiding collisions.
+
+Important limitations:
+- This is a best-effort coexistence mode, not a guaranteed dual-master RS485 solution.
+- OpenLux filters unrelated frames and correlates responses by function, start register, and register count.
+- When bus contention or corrupted frames are detected, OpenLux can briefly back off and serve fresh cached read responses.
+- Electrical quality still matters: termination, bias/failsafe, common GND, cable quality, polarity, and transceiver direction control can make or break this setup.
 
 ---
 
@@ -97,7 +103,7 @@ nano src/secrets.h
 ```
 
 **Also edit `src/config.h`** to customize:
-- RS485 pins (if different from GPIO 16, 17, 4)
+- RS485 pins (default GPIO 17 TX, GPIO 16 RX, DE disabled/auto-direction)
 - Network mode: `OPENLUX_USE_ETHERNET` (0=WiFi, 1=Ethernet)
 - WiFi portal (SSID/PASS/TIMEOUT) and log level
 - NTP servers and timezone
@@ -108,8 +114,8 @@ See [Configuration] section below for details.
 ### 3. Build & Upload
 
 ```bash
-#First upload(USB)
-pio run -e openlux -t upload
+#First upload/recovery over USB
+pio run -e openlux-serial -t upload
 
 #Monitor logs
 pio device monitor -b 115200
@@ -120,18 +126,41 @@ pio device monitor -b 115200
 After first upload, update wirelessly:
 
 ```bash
-#Edit platformio.ini with your ESP32 IP or use openlux.local
-pio run -e openlux-ota -t upload
+#Uses espota; default upload host is openlux
+pio run -e openlux -t upload
+
+#Or upload to a specific IP/hostname
+pio run -e openlux -t upload --upload-port 192.168.1.58
 ```
 
 ---
 
 ## 🖥️ Web Dashboard (Port 80)
 
-- Access: `http://openlux.local` (or your device IP) on port `80`.
-- Auth: basic auth enabled by default — user: `admin`, password: `openlux` (change in `src/config.h` via `WEB_DASH_USER`/`WEB_DASH_PASS`).
+- Access: `http://openlux` (or your device IP) on port `80`.
+- Auth: basic auth enabled by default with development credentials in `src/config.h`; change `WEB_DASH_USER`/`WEB_DASH_PASS` before exposing the device on a shared network.
 - Pages/APIs: minimal HTML dashboard at `/` with live status view (`/api/status`) and a simple command runner (`/api/cmd`) that forwards to the same command engine used by Telnet.
-- Purpose: quick troubleshooting (check status, run commands like `status`, `reboot`, `help`) without needing Telnet/HA.
+- Purpose: quick troubleshooting (check status, inspect TCP clients/cache, adjust runtime log level, pause/resume the bridge) without needing Telnet/HA.
+
+Example command API call:
+
+```bash
+curl -X POST 'http://openlux/api/cmd?cmd=status'
+```
+
+Common runtime commands:
+
+| Command | Purpose |
+| --- | --- |
+| `status` | Full link/network/TCP/RS485/web/firmware status |
+| `log_level` | Show current runtime log configuration |
+| `log_level 0` / `log_level 2` | Set all runtime logs to DEBUG / WARN |
+| `log_level <tag> <0-4>` | Set one module tag (`tcp`, `tcp_proto`, `rs485`, `bridge`, `net`, `web`, ...) |
+| `log_level reset` | Restore firmware log defaults |
+| `tcp_clients` / `tcp_clients drop` | Inspect or disconnect TCP clients |
+| `pause` / `resume` / `pause_status` | Temporarily reject RS485 bridge requests for maintenance |
+| `cache_status` / `cache_info` / `cache_clear` | Inspect or clear fallback cache |
+| `wifi_scan`, `wifi_reconnect`, `wifi_roam` | WiFi diagnostics and recovery |
 
 ---
 
@@ -142,7 +171,7 @@ OpenLux works with the [LuxPower Modbus Integration](https://github.com/ant0nkr/
 **Quick Setup:**
 1. Install via HACS: `https://github.com/ant0nkr/luxpower-ha-integration`
 2. Add Integration → "LuxPower Inverter (Modbus)"
-3. Configure: IP (`openlux.local`), Port (`8000`), Serial Numbers
+3. Configure: IP (`openlux` or the device IPv4 address), Port (`8000`), Serial Numbers
 
 ### MQTT Sensors (Optional)
 If you enable MQTT in `config.h`, OpenLux will automatically create diagnostic sensors in Home Assistant via MQTT Auto-Discovery. These telemetry sensors include:
@@ -163,8 +192,22 @@ The sensors will appear automatically in Home Assistant under the MQTT integrati
 
 - WiFi: leave `WIFI_SSID`/`WIFI_PASSWORD` empty to trigger the captive portal at first boot (portal SSID/PASS in `config.h`). Set them in `src/secrets.h` if you prefer preconfigured WiFi.
 - OTA password: set `OTA_PASSWORD` in `src/secrets.h`.
-- Static IP (WiFi): configure in `config.h` via `setStaticIP` params; portal also supports static IP when preconfigured.
+- Static IP (WiFi): define `USE_STATIC_IP`, `STATIC_IP`, `GATEWAY`, `SUBNET`, and `DNS1` in `src/secrets.h` or `src/config.local.h` (see `src/secrets.h.example`).
 - Ethernet: set `OPENLUX_USE_ETHERNET` to `1` and adjust ETH PHY/pins in `config.h`.
+- Local overrides: put site-specific overrides in `src/config.local.h`; it is ignored by git and included after `src/config.h`.
+
+### Logging
+
+- Firmware defaults are intentionally quiet: global and module log levels start at `WARN` (`2`) to avoid flooding the ESP32, rsyslog, or Home Assistant poll path.
+- Production builds compile runtime logging in (`OPENLUX_ENABLE_LOGGING=1`), so you can temporarily increase verbosity without reflashing:
+
+```bash
+curl -X POST 'http://openlux/api/cmd?cmd=log_level%200'
+curl -X POST 'http://openlux/api/cmd?cmd=log_level%20tcp%200'
+curl -X POST 'http://openlux/api/cmd?cmd=log_level%20reset'
+```
+
+Log levels are `0=DEBUG`, `1=INFO`, `2=WARN`, `3=ERROR`, `4=NONE`.
 
 ### Hardware Pins
 
@@ -172,7 +215,7 @@ Default pins in `src/config.h` (change if needed):
 ```cpp
 #define RS485_TX_PIN 17
 #define RS485_RX_PIN 16
-#define RS485_DE_PIN 4
+#define RS485_DE_PIN -1
 ```
 
 Ethernet pins/PHY are also in `config.h` (only used when `OPENLUX_USE_ETHERNET=1`).
@@ -183,8 +226,8 @@ OpenLux supports all ESP32 variants. Edit `platformio.ini`:
 ```ini
 [env]
 board = esp32dev              # Standard ESP32
-#board = esp32 - s3 - devkitc - 1 #ESP32 - S3
-#board = esp32 - c3 - devkitm - 1 #ESP32 - C3
+#board = esp32-s3-devkitc-1   # ESP32-S3
+#board = esp32-c3-devkitm-1   # ESP32-C3
 ```
 
 ---
@@ -214,11 +257,14 @@ For complete documentation, see: https://pre-commit.com/
 #Build
 pio run -e openlux
 
-#Upload(USB)
-pio run -e openlux -t upload
+#Upload/recovery over USB
+pio run -e openlux-serial -t upload
 
 #Upload(OTA)
-pio run -e openlux-ota -t upload
+pio run -e openlux -t upload
+
+#Upload(OTA) to a specific host/IP
+pio run -e openlux -t upload --upload-port openlux
 
 #Debug build
 pio run -e openlux-debug -t upload
@@ -231,7 +277,7 @@ pio run -e openlux-debug -t upload
 pio device monitor -b 115200
 
 #WiFi monitor
-nc openlux.local 23
+nc openlux 23
 ```
 
 ---
@@ -248,8 +294,10 @@ nc openlux.local 23
 - ✅ RS485 Module: MAX485-based transceiver
 - ✅ Network: WiFi (2.4GHz)
 - ✅ Integration: Home Assistant with LuxPower Modbus Integration
-- ✅ Operations: Read registers (0x03, 0x04) - Extensively tested
+- ✅ Operations: Read registers (0x03, 0x04) - Tested in the author's setup with Home Assistant LXP polling
 - ⚠️ Operations: Write registers (0x06, 0x10) - Basic testing only
+- ⚠️ Dual dongle/coexistence mode - Active investigation; depends heavily on RS485 electrical quality
+- ⚠️ Long read frames - Tested with 125-register polling, but corrupted long frames are still being investigated on some wiring/transceiver setups
 
 **Untested/Unknown:**
 - ❓ Other inverter models (SNA-12000, EG4 18kPV, etc.)
@@ -258,7 +306,7 @@ nc openlux.local 23
 - ❓ Ethernet connectivity (code present but untested)
 - ❓ Extended runtime stability (>1 week continuous operation)
 - ❓ Edge cases and error recovery scenarios
-- ❓ High-frequency polling (Home Assistant default is 30s)
+- ❓ High-frequency polling across many installations; current validation includes 17s LXP polling with 125-register blocks
 
 ### Help Needed! 🙏
 
@@ -357,7 +405,7 @@ OpenLux is actively evolving! Here are planned enhancements for future releases:
   - Screw terminals for A/B RS485 (alternative to HDMI)
   - USB-C for power and programming
   - Compact form factor for easy installation
-- Open hardware design (KiCad files)
+- Planned new open hardware design; current experimental PCB files are not release-ready
 - Optional 3D-printed enclosure
 
 ### Software Features
@@ -381,7 +429,7 @@ OpenLux is actively evolving! Here are planned enhancements for future releases:
 - RS485 communication failure alerts
 
 **🌐 Additional Protocols**
-- MQTT support for advanced integrations
+- Expanded MQTT telemetry/events for advanced integrations
 - REST API for custom applications
 - WebSocket for real-time updates
 

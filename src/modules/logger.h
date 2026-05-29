@@ -32,9 +32,15 @@ class Logger {
     // Log level control
     void setGlobalLevel(LogLevel level);
     LogLevel getGlobalLevel() const;
+    void setAllLevels(LogLevel level);
     void setModuleLevel(const char* tag, LogLevel level);
     LogLevel getModuleLevel(const char* tag) const;
     void clearModuleLevel(const char* tag);
+    void clearModuleLevels();
+    void resetLogLevels();
+    bool isEnabled(LogLevel message_level, const char* tag) const;
+    size_t getModuleOverrideCount() const { return module_level_count_; }
+    static const char* logLevelName(LogLevel level);
     // Deprecated compatibility helpers
     void setLogLevel(LogLevel level) { setGlobalLevel(level); }
     LogLevel getLogLevel() const { return getGlobalLevel(); }
@@ -83,8 +89,9 @@ class Logger {
     char buffer_[512];
     uint16_t telnet_port_ = 0;
     LogLevel global_level_ = LogLevel::INFO;
+    static constexpr size_t MAX_MODULE_TAG_LEN = 15;
     struct ModuleLevelOverride {
-        const char* tag;
+        char tag[MAX_MODULE_TAG_LEN + 1];
         LogLevel level;
     };
     static constexpr size_t MAX_MODULE_OVERRIDES = 16;
@@ -110,12 +117,36 @@ class Logger {
 
 // Convenience macros
 #if OPENLUX_ENABLE_LOGGING
-#define LOGD(tag, ...) Logger::getInstance().debug(tag, __VA_ARGS__)
-#define LOGI(tag, ...) Logger::getInstance().info(tag, __VA_ARGS__)
-#define LOGW(tag, ...) Logger::getInstance().warning(tag, __VA_ARGS__)
+#define LOGD(tag, ...)                                         \
+    do {                                                       \
+        Logger& _openlux_logger = Logger::getInstance();       \
+        if (_openlux_logger.isEnabled(LogLevel::DEBUG, tag)) { \
+            _openlux_logger.debug(tag, __VA_ARGS__);           \
+        }                                                      \
+    } while (0)
+#define LOGI(tag, ...)                                        \
+    do {                                                      \
+        Logger& _openlux_logger = Logger::getInstance();      \
+        if (_openlux_logger.isEnabled(LogLevel::INFO, tag)) { \
+            _openlux_logger.info(tag, __VA_ARGS__);           \
+        }                                                     \
+    } while (0)
+#define LOGW(tag, ...)                                        \
+    do {                                                      \
+        Logger& _openlux_logger = Logger::getInstance();      \
+        if (_openlux_logger.isEnabled(LogLevel::WARN, tag)) { \
+            _openlux_logger.warning(tag, __VA_ARGS__);        \
+        }                                                     \
+    } while (0)
 #else
 #define LOGD(tag, ...)
 #define LOGI(tag, ...)
 #define LOGW(tag, ...)
 #endif
-#define LOGE(tag, ...) Logger::getInstance().error(tag, __VA_ARGS__)
+#define LOGE(tag, ...)                                         \
+    do {                                                       \
+        Logger& _openlux_logger = Logger::getInstance();       \
+        if (_openlux_logger.isEnabled(LogLevel::ERROR, tag)) { \
+            _openlux_logger.error(tag, __VA_ARGS__);           \
+        }                                                      \
+    } while (0)

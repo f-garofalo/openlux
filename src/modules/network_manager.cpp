@@ -14,6 +14,9 @@
 #include "system_manager.h"
 
 #include <Esp.h>
+#if !OPENLUX_USE_ETHERNET
+#include <esp_wifi.h>
+#endif
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -98,22 +101,23 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
 
 #if !OPENLUX_USE_ETHERNET
     LOGI(TAG, "  SSID: %s", ssid_);
+    const bool has_ssid = (ssid_ && strlen(ssid_) > 0);
 
     WiFi.onEvent([this](WiFiEvent_t event, WiFiEventInfo_t info) { handleWiFiEvent(event, info); });
+    WiFi.persistent(!has_ssid);
+    LOGI(TAG, "  WiFi credentials source: %s",
+         has_ssid ? "firmware config (persistent storage disabled)" : "provisioning portal");
 
     // Set hostname early
     if (hostname_) {
         WiFi.setHostname(hostname_);
     }
     WiFi.mode(WIFI_STA);
-
-#ifdef WIFI_TX_POWER
-    WiFi.setTxPower(WIFI_TX_POWER);
-#endif
+    configureWiFiPowerSave();
+    applyWiFiTxPower("initial STA setup");
 
 
     // Provisioning path: if no SSID provided, start captive portal
-    bool has_ssid = (ssid_ && strlen(ssid_) > 0);
     if (!has_ssid) {
         LOGW(TAG, "No WiFi SSID provided, starting setup portal...");
         WiFiManager wm;
@@ -162,6 +166,47 @@ void NetworkManager::loop() {
     // Logic moved to runTask() executed by FreeRTOS task on Core 0
 }
 
+void NetworkManager::configureWiFiPowerSave() {
+#if !OPENLUX_USE_ETHERNET
+    const bool sleep_call_ok = WiFi.setSleep(false);
+    const esp_err_t set_result = esp_wifi_set_ps(WIFI_PS_NONE);
+    wifi_ps_type_t ps_type = WIFI_PS_MAX_MODEM;
+    const esp_err_t get_result = esp_wifi_get_ps(&ps_type);
+    wifi_power_save_disabled_ =
+        (set_result == ESP_OK) && (get_result == ESP_OK) && (ps_type == WIFI_PS_NONE);
+
+    if (wifi_power_save_disabled_) {
+        LOGI(TAG, "WiFi power save disabled");
+    } else {
+        LOGW(TAG, "WiFi power save disable incomplete (sleep_call=%s set_err=%d get_err=%d ps=%d)",
+             sleep_call_ok ? "ok" : "fail", set_result, get_result, ps_type);
+    }
+#else
+    wifi_power_save_disabled_ = true;
+#endif
+}
+
+void NetworkManager::applyWiFiTxPower(const char* context) {
+#if !OPENLUX_USE_ETHERNET
+#ifdef WIFI_TX_POWER
+    const bool applied = WiFi.setTxPower(WIFI_TX_POWER);
+    const int8_t raw_power = WiFi.getTxPower();
+    const int whole = raw_power / 4;
+    const int fraction = abs((raw_power % 4) * 25);
+
+    if (applied) {
+        LOGI(TAG, "WiFi TX power applied (%s): %d.%02d dBm", context, whole, fraction);
+    } else {
+        LOGW(TAG, "WiFi TX power apply failed (%s), current raw=%d", context, raw_power);
+    }
+#else
+    (void) context;
+#endif
+#else
+    (void) context;
+#endif
+}
+
 void NetworkManager::setStaticIP(IPAddress ip, IPAddress gateway, IPAddress subnet,
                                  IPAddress dns1) {
     use_static_ip_ = true;
@@ -181,6 +226,11 @@ void NetworkManager::setHostname(const char* hostname) {
 }
 
 void NetworkManager::setupOTA(const char* hostname, const char* password, uint16_t port) {
+    if (ota_enabled_) {
+        LOGD(TAG, "OTA already configured");
+        return;
+    }
+
     LOGI(TAG, "Setting up OTA");
     LOGI(TAG, "  Hostname: %s", hostname);
     LOGI(TAG, "  Port: %d", port);
@@ -261,6 +311,11 @@ void NetworkManager::setupOTA(const char* hostname, const char* password, uint16
 }
 
 void NetworkManager::setupMDNS(const char* hostname) {
+    if (mdns_started_) {
+        LOGD(TAG, "mDNS already started");
+        return;
+    }
+
     if (!MDNS.begin(hostname)) {
         LOGE(TAG, "mDNS failed to start");
         return;
@@ -268,6 +323,7 @@ void NetworkManager::setupMDNS(const char* hostname) {
 
     MDNS.addService("http", "tcp", 80);
     MDNS.addService("telnet", "tcp", 23);
+    mdns_started_ = true;
 
     LOGI(TAG, "mDNS started: %s.local", hostname);
 }
@@ -281,7 +337,7 @@ void NetworkManager::softReconnect() {
     LOGI(TAG, "WiFi soft reconnect");
     WiFi.disconnect(false);
     vTaskDelay(pdMS_TO_TICKS(200));
-    WiFi.reconnect(); // uses stored credentials
+    connectWiFi(false);
 }
 
 void NetworkManager::restartInterface() {
@@ -294,7 +350,9 @@ void NetworkManager::restartInterface() {
     WiFi.mode(WIFI_OFF);
     vTaskDelay(pdMS_TO_TICKS(200));
     WiFi.mode(WIFI_STA);
-    WiFi.begin(); // uses stored credentials
+    configureWiFiPowerSave();
+    applyWiFiTxPower("interface restart");
+    connectWiFi(false);
 }
 #else
 void NetworkManager::softReconnect() {
@@ -336,12 +394,13 @@ void NetworkManager::markBootSuccessful() {
 #if !OPENLUX_USE_ETHERNET
 bool NetworkManager::startProvisioningPortal() {
     LOGI(TAG, "Starting provisioning portal (AP)");
-    portal_opened_once_ = true;
 
     // Disable watchdog during blocking portal
     SystemManager::getInstance().disableWatchdog();
 
     WiFi.mode(WIFI_STA);
+    configureWiFiPowerSave();
+    applyWiFiTxPower("provisioning portal");
     WiFi.disconnect(true, true);
 
     WiFiManager wm;
@@ -420,6 +479,8 @@ void NetworkManager::connectWiFi(bool force_scan) {
 #if OPENLUX_USE_ETHERNET
     return;
 #else
+    configureWiFiPowerSave();
+
     auto& guard_mgr = OperationGuardManager::getInstance();
     auto guard = guard_mgr.acquireGuard(OperationGuard::OperationType::WIFI_SCAN, "connectWiFi");
     if (!guard) {
@@ -437,6 +498,7 @@ void NetworkManager::connectWiFi(bool force_scan) {
     if (!should_scan) {
         LOGI(TAG, "Fast Connect enabled: skipping scan");
         WiFi.begin(ssid_, password_);
+        applyWiFiTxPower("fast connect begin");
         last_connect_attempt_ = millis();
     } else {
         LOGI(TAG, "Scanning for best AP for SSID: %s", ssid_);
@@ -452,10 +514,12 @@ void NetworkManager::connectWiFi(bool force_scan) {
 
             // Connect using specific BSSID and channel for faster and more reliable connection
             WiFi.begin(ssid_, password_, channel, bssid);
+            applyWiFiTxPower("scanned connect begin");
         } else {
             LOGW(TAG,
                  "Target SSID not found in scan or scan failed, using default connection method");
             WiFi.begin(ssid_, password_);
+            applyWiFiTxPower("fallback connect begin");
         }
 
         WiFi.scanDelete();
@@ -465,73 +529,75 @@ void NetworkManager::connectWiFi(bool force_scan) {
 #endif
 }
 
-bool NetworkManager::validateConnection() {
-    LOGI(TAG, "Starting validation connection check...");
-#if OPENLUX_USE_ETHERNET
-    if (!eth_connected_)
-        return false;
-    IPAddress gateway = ETH.gatewayIP();
-#else
-    if (WiFi.status() != WL_CONNECTED)
-        return false;
-    IPAddress gateway = WiFi.gatewayIP();
-#endif
-
-    if (gateway == IPAddress(0, 0, 0, 0)) {
-        LOGW(TAG, "Gateway IP is 0.0.0.0");
-        return true;
+const char* NetworkManager::getLastWiFiDisconnectReasonName() const {
+    switch (last_wifi_disconnect_reason_) {
+        case 0:
+            return "none";
+        case 1:
+            return "UNSPECIFIED";
+        case 2:
+            return "AUTH_EXPIRE";
+        case 3:
+            return "AUTH_LEAVE";
+        case 4:
+            return "ASSOC_EXPIRE";
+        case 5:
+            return "ASSOC_TOOMANY";
+        case 6:
+            return "NOT_AUTHED";
+        case 7:
+            return "NOT_ASSOCED";
+        case 8:
+            return "ASSOC_LEAVE";
+        case 9:
+            return "ASSOC_NOT_AUTHED";
+        case 14:
+            return "MIC_FAILURE";
+        case 15:
+            return "4WAY_HANDSHAKE_TIMEOUT";
+        case 16:
+            return "GROUP_KEY_UPDATE_TIMEOUT";
+        case 17:
+            return "IE_IN_4WAY_DIFFERS";
+        case 18:
+            return "GROUP_CIPHER_INVALID";
+        case 19:
+            return "PAIRWISE_CIPHER_INVALID";
+        case 20:
+            return "AKMP_INVALID";
+        case 21:
+            return "UNSUPP_RSN_IE_VERSION";
+        case 22:
+            return "INVALID_RSN_IE_CAP";
+        case 23:
+            return "802_1X_AUTH_FAILED";
+        case 24:
+            return "CIPHER_SUITE_REJECTED";
+        case 200:
+            return "BEACON_TIMEOUT";
+        case 201:
+            return "NO_AP_FOUND";
+        case 202:
+            return "AUTH_FAIL";
+        case 203:
+            return "ASSOC_FAIL";
+        case 204:
+            return "HANDSHAKE_TIMEOUT";
+        default:
+            return "UNKNOWN";
     }
+}
 
-    // Check if TCP operations are in progress - skip validation if they are
-    auto& guard_mgr = OperationGuardManager::getInstance();
-    if (!guard_mgr.canPerformOperation(OperationGuard::OperationType::NETWORK_VALIDATION)) {
-        LOGD(TAG, "Skipping connection validation: blocking operation in progress");
-        return gateway_reachable_; // Return last known state
-    }
+uint32_t NetworkManager::getLastWiFiDisconnectAgeMs() const {
+    if (last_wifi_disconnect_ms_ == 0)
+        return 0;
+    return millis() - last_wifi_disconnect_ms_;
+}
 
-    {
-        auto guard = guard_mgr.acquireGuard(OperationGuard::OperationType::NETWORK_VALIDATION);
-
-        {
-            WiFiClient client;
-            client.setNoDelay(true);
-            client.setTimeout(100); // Reduced timeout
-            if (client.connect(gateway, 53, 100)) {
-                client.stop();
-                LOGD(TAG, "Connection validated via Gateway:53");
-                return true;
-            }
-        }
-
-#if defined(MQTT_HOST)
-        {
-            WiFiClient client;
-            client.setNoDelay(true);
-            client.setTimeout(50); // Reduced timeout
-            if (client.connect(MQTT_HOST, MQTT_PORT, 50)) {
-                client.stop();
-                LOGD(TAG, "Connection validated via MQTT broker");
-                return true;
-            }
-            LOGW(TAG, "Failed to connect to gateway %s (port 53) and MQTT %s:%d",
-                 gateway.toString().c_str(), MQTT_HOST, MQTT_PORT);
-        }
-#else
-        {
-            WiFiClient client;
-            client.setNoDelay(true);
-            client.setTimeout(50); // Reduced timeout
-            if (client.connect(gateway, 80, 50)) {
-                client.stop();
-                LOGD(TAG, "Connection validated via Gateway:80");
-                return true;
-            }
-            LOGW(TAG, "Failed to connect to gateway %s (ports 53, 80)", gateway.toString().c_str());
-        }
-#endif
-    }
-
-    return false;
+uint32_t NetworkManager::getLastWiFiConnectAgeMs() const {
+    if (last_wifi_connect_ms_ == 0)
+        return 0;
+    return millis() - last_wifi_connect_ms_;
 }
 
 bool NetworkManager::isConnected() {
@@ -546,37 +612,7 @@ bool NetworkManager::isConnected() {
     link_up = (WiFi.status() == WL_CONNECTED);
 #endif
 
-    if (!link_up) {
-        // If physical link is down, we are not connected.
-        // We reset the gateway reachable flag so that when link comes back,
-        // we assume it's good until proven otherwise (or until next check).
-        gateway_reachable_ = true;
-        return false;
-    }
-
-    const uint32_t now = millis();
-    uint32_t validation_interval = VALIDATION_INTERVAL_MS;
-    if (!gateway_reachable_) {
-        validation_interval = VALIDATION_INTERVAL_MS * 3;
-    }
-
-    if (now - last_validation_ms_ > validation_interval) {
-        last_validation_ms_ = now;
-        const bool reachable = validateConnection();
-        if (reachable != gateway_reachable_) {
-            if (!reachable) {
-                LOGW(TAG, "Active connection check failed! Gateway unreachable.");
-                auto& sys = SystemManager::getInstance();
-            } else {
-                LOGI(TAG, "Active connection check passed (recovered).");
-            }
-            gateway_reachable_ = reachable;
-        } else if (reachable) {
-            LOGD(TAG, "Active connection check passed.");
-        }
-    }
-
-    return gateway_reachable_;
+    return link_up;
 }
 
 void NetworkManager::checkConnection() {
@@ -634,7 +670,8 @@ void NetworkManager::checkConnection() {
         roamingIfNeeded();
     }
 
-    // Connectivity watchdog: escalate reconnect → restart interface → reboot
+    // Connectivity watchdog: escalate reconnect -> restart interface -> reboot.
+    // Home Assistant silence is intentionally ignored; only WiFi link loss can trip this.
     bool can_recover = has_credentials || WiFi.SSID().length() > 0;
     if (!connected) {
         if (disconnected_since_ == 0) {
@@ -658,12 +695,6 @@ void NetworkManager::checkConnection() {
             watchdog_restart_done_ = true;
         }
 
-        if (can_recover && !portal_opened_once_ && down_ms >= WIFI_WATCHDOG_PORTAL_DELAY_MS &&
-            down_ms < WIFI_WATCHDOG_REBOOT_DELAY_MS) {
-            LOGW(TAG, "WiFi watchdog: opening provisioning portal after %lu ms downtime", down_ms);
-            startProvisioningPortal();
-        }
-
         if (can_recover && down_ms >= WIFI_WATCHDOG_REBOOT_DELAY_MS) {
             LOGE(TAG, "WiFi watchdog: rebooting after prolonged disconnect (%lu ms)", down_ms);
             rebootDevice("WiFi watchdog");
@@ -673,7 +704,6 @@ void NetworkManager::checkConnection() {
         disconnected_since_ = 0;
         watchdog_reconnect_done_ = false;
         watchdog_restart_done_ = false;
-        portal_opened_once_ = false;
     }
 }
 
@@ -713,6 +743,7 @@ void NetworkManager::roamingIfNeeded() {
                     WiFi.disconnect();
                     vTaskDelay(pdMS_TO_TICKS(100));
                     WiFi.begin(ssid_, password_, channel, bssid);
+                    applyWiFiTxPower("roaming begin");
                     was_connected_ = false;
                 } else {
                     LOGW(TAG, "Already connected to strongest AP (%d dBm)", currentRSSI);
@@ -774,11 +805,37 @@ void NetworkManager::handleWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
             break;
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
             logHeapStatus("sta_disconnected");
+            wifi_disconnect_count_++;
+            last_wifi_disconnect_ms_ = millis();
+            last_wifi_disconnect_reason_ = info.wifi_sta_disconnected.reason;
             LOGW(TAG, "WiFi disconnect reason=%d", info.wifi_sta_disconnected.reason);
-            gateway_reachable_ = false;
+            if (mdns_started_) {
+                MDNS.end();
+                mdns_started_ = false;
+            }
+            switch (info.wifi_sta_disconnected.reason) {
+                case 2:   // AUTH_EXPIRE
+                case 6:   // NOT_AUTHED
+                case 14:  // MIC_FAILURE
+                case 15:  // 4WAY_HANDSHAKE_TIMEOUT
+                case 16:  // GROUP_KEY_UPDATE_TIMEOUT
+                case 202: // AUTH_FAIL
+                case 203: // ASSOC_FAIL
+                case 204: // HANDSHAKE_TIMEOUT
+                    last_connect_attempt_ = millis();
+                    break;
+                default:
+                    break;
+            }
             break;
         case ARDUINO_EVENT_WIFI_STA_CONNECTED:
             logHeapStatus("sta_connected");
+            wifi_connect_count_++;
+            last_wifi_connect_ms_ = millis();
+            configureWiFiPowerSave();
+            applyWiFiTxPower("sta connected");
+            LOGI(TAG, "WiFi connected to AP %s on channel %u", WiFi.BSSIDstr().c_str(),
+                 WiFi.channel());
             break;
         default:
             break;

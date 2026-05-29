@@ -67,6 +67,7 @@ class NetworkManager {
     String getSSID() const { return String("ETH"); }
     int getRSSI() const { return 0; }
     String getMAC() const { return ETH.macAddress(); }
+    String getBSSID() const { return ETH.macAddress(); }
     int8_t getTxPower() const { return 0; }
     uint32_t getChannel() const { return 0; }
 #else
@@ -74,9 +75,23 @@ class NetworkManager {
     String getSSID() const { return WiFi.SSID(); }
     int getRSSI() const { return WiFi.RSSI(); }
     String getMAC() const { return WiFi.macAddress(); }
+    String getBSSID() const { return WiFi.BSSIDstr(); }
     int8_t getTxPower() const { return WiFi.getTxPower(); }
     uint32_t getChannel() const { return WiFi.channel(); }
 #endif
+    bool isWiFiPowerSaveDisabled() const { return wifi_power_save_disabled_; }
+    uint32_t getWiFiConnectCount() const { return wifi_connect_count_; }
+    uint32_t getWiFiDisconnectCount() const { return wifi_disconnect_count_; }
+    uint8_t getLastWiFiDisconnectReason() const { return last_wifi_disconnect_reason_; }
+    const char* getLastWiFiDisconnectReasonName() const;
+    uint32_t getLastWiFiDisconnectAgeMs() const;
+    uint32_t getLastWiFiConnectAgeMs() const;
+    uint32_t getWiFiWatchdogDownMs() const {
+        return disconnected_since_ == 0 ? 0 : millis() - disconnected_since_;
+    }
+    uint32_t getWiFiWatchdogRebootDelayMs() const { return WIFI_WATCHDOG_REBOOT_DELAY_MS; }
+    bool hasWiFiWatchdogReconnected() const { return watchdog_reconnect_done_; }
+    bool hasWiFiWatchdogRestarted() const { return watchdog_restart_done_; }
 
     // OTA configuration
     void setupOTA(const char* hostname, const char* password, uint16_t port = 3232);
@@ -88,14 +103,13 @@ class NetworkManager {
     void setupMDNS(const char* hostname);
 
     // Utilities
-    void softReconnect();                  // disconnect + reconnect without power cycling WiFi
-    void restartInterface();               // power-cycle WiFi STA and reconnect with stored creds
-    void forceScanAndConnect();            // Force a scan and connect to best AP
+    void softReconnect();       // disconnect + reconnect without power cycling WiFi
+    void restartInterface();    // power-cycle WiFi STA and reconnect with configured creds
+    void forceScanAndConnect(); // Force a scan and connect to best AP
     void rebootDevice(const char* reason); // log and reboot
     bool startProvisioningPortal();        // start AP portal for WiFi config (blocking)
     void clearCredentials();               // wipe stored WiFi credentials (NVS)
     void markBootSuccessful();             // reset boot failure counter
-    bool validateConnection();             // Active check (TCP connect to gateway)
 
     // Callbacks
     void onConnected(const NetworkConnectedCallback& callback) { on_connected_ = callback; }
@@ -126,6 +140,8 @@ class NetworkManager {
     void runTask();
     static void taskTrampoline(void* arg);
     void startNetworkTask();
+    void configureWiFiPowerSave();
+    void applyWiFiTxPower(const char* context);
 
     int scanAndFindBestAP(int& bestRSSI);
 
@@ -141,8 +157,8 @@ class NetworkManager {
 
     bool was_connected_ = false;
     bool ota_enabled_ = false;
-    bool portal_opened_once_ = false;
     bool boot_failures_loaded_ = false;
+    bool mdns_started_ = false;
     bool use_ethernet_ = false;
     bool eth_connected_ = false;
     uint32_t last_connect_attempt_ = 0;
@@ -150,11 +166,14 @@ class NetworkManager {
     uint32_t disconnected_since_ = 0;
     bool watchdog_reconnect_done_ = false;
     bool watchdog_restart_done_ = false;
-    bool watchdog_portal_done_ = false;
     uint32_t last_scan_ms_ = 0;
-    uint32_t last_validation_ms_ = 0;
-    bool gateway_reachable_ = true;
     uint8_t boot_failures_ = 0;
+    bool wifi_power_save_disabled_ = false;
+    uint32_t wifi_connect_count_ = 0;
+    uint32_t wifi_disconnect_count_ = 0;
+    uint32_t last_wifi_connect_ms_ = 0;
+    uint32_t last_wifi_disconnect_ms_ = 0;
+    uint8_t last_wifi_disconnect_reason_ = 0;
 
     NetworkConnectedCallback on_connected_ = nullptr;
     NetworkDisconnectedCallback on_disconnected_ = nullptr;
@@ -169,8 +188,6 @@ class NetworkManager {
 
     static constexpr uint32_t CONNECT_RETRY_DELAY = 5000; // 5 seconds
     static constexpr uint32_t STATUS_LOG_INTERVAL = 5 * 60 * 1000;
-    static constexpr uint32_t VALIDATION_INTERVAL_MS = 3 * 60 * 1000;
-
     void logHeapStatus(const char* context);
 #if OPENLUX_USE_ETHERNET
     void handleEthernetEvent(WiFiEvent_t event, WiFiEventInfo_t info);

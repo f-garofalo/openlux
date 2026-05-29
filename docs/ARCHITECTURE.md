@@ -25,7 +25,7 @@
 │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐         │
 │  │ TCP Server   │──>│ Protocol     │──>│ RS485        │         │
 │  │ (Port 8000)  │   │ Bridge       │   │ Manager      │         │
-│  │              │<──│ (Translator) │<──│              │         │
+│  │              │<──│ Queue/Worker │<──│ Parser       │         │
 │  └──────────────┘   └──────────────┘   └──────────────┘         │
 │         ↑                                       ↓               │
 │         │                                       │ RS485         │
@@ -47,10 +47,10 @@ OpenLux ESP32 Firmware
 ├── System & Coordination (src/modules/)
 │   ├── SystemManager       → Hardware operations (reboot, heap, watchdog, uptime)
 │   ├── OperationGuard      → Lock manager for blocking operations (TCP/RS485/Network/WiFi)
-│   └── CommandManager      → CLI commands via Telnet/Serial
+│   └── CommandManager      → CLI commands via Telnet/Serial/Web API
 │
 ├── Core Services (src/modules/)
-│   ├── NetworkManager      → WiFi/Ethernet, OTA updates, mDNS
+│   ├── NetworkManager      → WiFi/Ethernet, OTA updates, hostname/mDNS
 │   ├── Logger              → Dual output (Serial + Telnet on port 23)
 │   └── NTPManager          → Time synchronization
 │
@@ -59,13 +59,13 @@ OpenLux ESP32 Firmware
 │   └── MqttManager         → MQTT telemetry + Home Assistant Auto-Discovery
 │
 ├── Communication Layer (src/modules/)
-│   ├── TCPServer           → Multi-client TCP server (port 8000, max 5)
+│   ├── TCPServer           → Multi-client TCP server (port 8000, max 3)
 │   ├── TCPProtocol         → WiFi protocol parser (A1 1A format)
-│   ├── RS485Manager        → UART communication (Modbus-like)
+│   ├── RS485Manager        → UART communication, pacing, response collection
 │   └── InverterProtocol    → Inverter-specific protocol
 │
 ├── Coordination Layer (src/modules/)
-│   └── ProtocolBridge      → Bidirectional translator (WiFi ↔ RS485)
+│   └── ProtocolBridge      → Bounded queue, single RS485 worker, cache/coexistence
 │
 └── Utilities (src/utils/)
     ├── CRC16               → CRC16-Modbus calculator
@@ -92,17 +92,18 @@ OpenLux ESP32 Firmware
 
 **CommandManager** (`command_manager.h/cpp`)
 - Interactive CLI command system via Telnet/Serial
-- Built-in commands: `status`, `reboot`, `help`, `wifi_restart`, `probe_rs485`, `mqtt_status`
+- The same command engine is exposed by the web dashboard at `POST /api/cmd`
+- Built-in commands include `status`, `reboot`, `help`, `wifi_restart`, `wifi_reconnect`, `wifi_roam`, `wifi_scan`, `wifi_reset`, `probe_rs485`, `mqtt_status`, `ntp_sync`, `heap`, `tcp_clients`, `pause`, `resume`, `pause_status`, `cache_status`, `cache_info`, and `cache_clear`
 - Extensible command registration system
 - Command debouncing for critical operations
-- Status reporting (uptime, memory, network, RS485, MQTT)
+- Status reporting (uptime, memory, network, TCP, RS485, web, MQTT, cache, coexistence)
 
 #### Core Services
 
 **NetworkManager** (`network_manager.h/cpp`)
 - Manages WiFi or Ethernet connectivity based on `OPENLUX_USE_ETHERNET` flag
 - Handles OTA (Over-The-Air) firmware updates on port 3232
-- Provides mDNS service (openlux.local)
+- Provides the `openlux` network hostname and registers mDNS when available
 - Supports static IP or DHCP configuration
 - Implements WiFi captive portal for initial setup
 - Automatic reconnection with configurable watchdog timers
@@ -152,9 +153,11 @@ OpenLux ESP32 Firmware
 
 **TCPServer** (`tcp_server.h/cpp`)
 - Asynchronous TCP server on port 8000 (protocol-compatible dongle)
-- Multi-client support (up to 5 simultaneous connections)
+- Multi-client support (up to 3 simultaneous connections)
 - Per-client timeout management (5 minutes default)
 - Connection state tracking and cleanup
+- Central ownership of `AsyncClient` close/removal lifecycle
+- Deferred close/delete path: close requests are marked first, then clients are destroyed only after `AsyncClient::free()` reports it is safe
 - Integration with ProtocolBridge for packet forwarding
 
 **TCPProtocol** (`tcp_protocol.h/cpp`)
@@ -166,30 +169,40 @@ OpenLux ESP32 Firmware
 - Works over WiFi or Ethernet transparently
 
 **RS485Manager** (`rs485_manager.h/cpp`)
-- Hardware UART communication (Serial2 on ESP32)
+- Hardware UART communication (`Serial1` in the current ESP32 build)
 - Configurable TX/RX/DE pins
 - Modbus-like protocol implementation
-- Direction control (DE/RE pin) with auto-direction support
-- Timeout and retry logic
+- Direction control (DE/RE pin) with auto-direction support; the default build uses `RS485_DE_PIN=-1` for auto-direction/no explicit DE pin
+- 1024-byte UART RX ring buffer for full 125-register response frames
+- Request pacing with a 120ms quiet gap between serialized RS485 transactions
+- Response timeout defaults to 800ms
+- Multi-frame parsing support for buffers that contain unrelated bus traffic
+- Response matching by function code, start register, and register count
 - Frame validation with CRC checking
-- Inverter serial number detection and probing
+- Inverter serial number detection with on-demand/auto retry probing when the link is down
 
 **InverterProtocol** (`inverter_protocol.h/cpp`)
 - Inverter-specific protocol implementation
 - Packet structure handling and validation
 - Register-level operations (read/write)
 - Inverter-specific frame formatting
+- Parser helpers for concatenated frames and matching a specific expected response
 - Device identification and probing logic
 
 #### Coordination Layer
 
 **ProtocolBridge** (`protocol_bridge.h/cpp`)
 - Central coordinator between TCP and RS485
-- Bidirectional packet translation (WiFi ↔ RS485)
-- Request routing and response correlation
+- Bidirectional packet translation (WiFi <-> RS485)
+- Fixed-size request queue and single RS485 worker so Home Assistant TCP framing is decoupled from the RS485 round-trip
+- Explicit worker states: `QUEUED`, `RS485_SEND`, `RS485_RETRY`, `WAIT_RESPONSE`, `CACHE_FALLBACK`, `RESPOND_TCP`, `DONE`, `FAILED`
+- Request routing and response correlation by function code, start register, and register count
 - CRC validation on both protocols
-- Register count validation (≤127 for new inverters, ≤40 for old)
+- Register count validation (max 127 protocol register slots per request)
 - Serial number extraction and forwarding
+- Fallback read cache with 14 entries and a 45-second maximum fallback age
+- Coexistence pressure mode: after repeated bus contention/corruption, OpenLux can briefly back off and serve fresh cached read responses up to 45 seconds old
+- Protocol-compatible gateway exception (`0x0B`) when the inverter response is missing and no valid cache entry is available
 - Error handling and response generation
 
 #### Utilities
@@ -213,12 +226,13 @@ OpenLux ESP32 Firmware
 OpenLux acts as a transparent bridge between Home Assistant and your solar inverter:
 
 1. **TCP Connection**: Home Assistant connects to OpenLux on port 8000
-2. **Request Reception**: TCPServer receives requests from Home Assistant
-3. **Protocol Translation**: TCPProtocol parses the WiFi protocol format
-4. **Bridge Processing**: ProtocolBridge validates and forwards to RS485
-5. **RS485 Communication**: RS485Manager sends Modbus-like requests to inverter
-6. **Response Handling**: Inverter response flows back through the same path
-7. **TCP Response**: Translated response sent back to Home Assistant
+2. **Request Reception**: TCPServer receives and frames complete Lux TCP packets
+3. **Protocol Parsing**: TCPProtocol validates the A1 1A wrapper and CRC
+4. **Queueing**: ProtocolBridge enqueues the request if the bridge is not paused and the queue has room
+5. **Serialized RS485 Access**: a single worker sends one RS485 request at a time with pacing/retry guards
+6. **Response Matching**: RS485Manager/InverterProtocol parse all received frames and pick the one matching function, start register, and count
+7. **Fallback/Exception**: on missing or mismatched responses, the bridge uses cache when valid or sends a protocol-compatible exception
+8. **TCP Response**: the selected RS485 response is wrapped back into the TCP protocol and sent to Home Assistant
 
 ### Supported Operations
 
@@ -237,6 +251,19 @@ The ProtocolBridge component handles bidirectional translation between:
 
 All packets are validated with CRC16-Modbus checksums on both sides.
 
+### Dual-Dongle / Coexistence Mode
+
+Coexistence with the official dongle is best-effort. OpenLux is still an RS485 master, so a second master on the same physical bus can create timing contention or expose electrical weaknesses.
+
+The current firmware mitigates this by:
+- Ignoring unrelated valid frames that do not match the active request.
+- Matching read responses by function, start register, and register count.
+- Detecting repeated contention/corruption events and opening a short backoff window.
+- Serving fresh cached read responses during the pressure window when possible.
+- Returning exception `0x0B` instead of dropping the TCP client when no valid response/cache exists.
+
+These mitigations do not replace correct RS485 wiring, termination, failsafe biasing, common ground, polarity, shielding, and stable transceiver direction control.
+
 ### Implementation Notes
 
 **Protocol Details**: The specific packet structures and protocol specifications are based on community reverse-engineering efforts and are kept in internal documentation to respect intellectual property concerns. The implementation follows standard Modbus RTU principles adapted for solar inverter equipment.
@@ -252,24 +279,25 @@ All packets are validated with CRC16-Modbus checksums on both sides.
 
 ### Compile-Time Configuration
 
-All user-configurable settings are in `src/config.h`:
+Default firmware settings live in `src/config.h`. Site-specific values should go in `src/secrets.h` or `src/config.local.h`; local credentials must not be committed to git.
 
 **Network Settings:**
-- `WIFI_HOSTNAME` - mDNS hostname (default: "openlux")
+- `WIFI_HOSTNAME` - Network hostname and mDNS label (default: "openlux")
 - `OPENLUX_USE_ETHERNET` - Enable Ethernet instead of WiFi (0=WiFi, 1=Ethernet)
 - `TCP_SERVER_PORT` - TCP server port (default: 8000, don't change!)
-- `TCP_MAX_CLIENTS` - Maximum simultaneous clients (default: 5)
+- `TCP_MAX_CLIENTS` - Maximum simultaneous clients (default: 3)
 - `WEB_DASH_PORT` - Web dashboard port (default: 80)
 
 **MQTT Settings** (if `ENABLE_MQTT` enabled):
-- `MQTT_BROKER` - MQTT broker IP/hostname
+- `MQTT_HOST` - MQTT broker IP/hostname
 - `MQTT_PORT` - MQTT broker port (default: 1883)
-- `MQTT_USERNAME` / `MQTT_PASSWORD` - MQTT credentials
+- `MQTT_USER` / `MQTT_PASS` - MQTT credentials
 - `MQTT_DISCOVERY_PREFIX` - Home Assistant MQTT discovery prefix (default: "homeassistant")
 - `MQTT_TOPIC_PREFIX` - Topic prefix for device topics (default: "openlux")
 
 **Hardware Configuration:**
 - `RS485_TX_PIN`, `RS485_RX_PIN`, `RS485_DE_PIN` - UART pins
+- `RS485_DE_PIN=-1` - Current default for auto-direction modules or modules without explicit DE/RE control
 - `RS485_BAUD_RATE` - Fixed at 19200 per inverter protocol specification
 - Ethernet PHY settings (if using Ethernet)
 
@@ -286,6 +314,13 @@ All user-configurable settings are in `src/config.h`:
 - `WIFI_WATCHDOG_RESTART_DELAY_MS` - WiFi interface restart trigger
 - `WIFI_WATCHDOG_REBOOT_DELAY_MS` - Device reboot trigger
 - `BOOT_FAIL_RESET_THRESHOLD` - Auto-reset credentials after N failed boots
+- `RS485_MIN_REQUEST_GAP_MS` - Quiet gap between serialized RS485 requests (default: 120ms)
+- `RS485_UART_RX_BUFFER_SIZE` - UART RX ring buffer size (default: 1024 bytes)
+- `RS485_COEXISTENCE_ENABLED` - Enable best-effort dual-master coexistence mode
+- `RS485_COEXISTENCE_TRIGGER_EVENTS` - Consecutive contention events before coex backoff
+- `RS485_COEXISTENCE_BACKOFF_MS` - Backoff window after detected contention
+- `RS485_COEXISTENCE_PRESSURE_WINDOW_MS` - Window where fresh cache is preferred
+- `RS485_COEXISTENCE_CACHE_MAX_AGE_MS` - Maximum fresh-cache age during coex pressure
 
 **Feature Flags:**
 ```cpp
@@ -323,17 +358,16 @@ board = esp32dev              # Standard ESP32
 
 **openlux** - Production build
 - Optimized for size and performance
-- Standard debug level (INFO)
+- Runtime logging compiled in, with firmware/module defaults set to WARN
 
 **openlux-debug** - Debug build
 - Verbose logging (DEBUG level)
 - Additional debug symbols
 - Useful for development and troubleshooting
 
-**openlux-ota** - OTA upload environment
-- Wireless firmware upload
-- Requires device IP or mDNS name
-- Password-protected
+**openlux-serial** - Serial recovery/upload
+- USB upload using `esptool`
+- Useful for first flash or recovery when OTA is unavailable
 
 ### Build Scripts
 
@@ -371,9 +405,9 @@ Output includes:
 
 Connect remotely:
 ```bash
-nc openlux.local 23
+nc openlux 23
 # or
-telnet openlux.local 23
+telnet openlux 23
 ```
 
 Features:
@@ -386,20 +420,27 @@ Features:
 
 Available via Serial or Telnet:
 
-| Command       | Description |
-|---------------|-------------|
-| `status`      | Show system status (uptime, memory, network, RS485, MQTT if enabled) |
-| `reboot`      | Restart the device |
-| `help`        | Show available commands |
-| `wifi_restart`| Restart WiFi interface |
-| `probe_rs485` | Test RS485 communication with inverter |
-| `mqtt_status` | Show MQTT connection status (if MQTT enabled) |
+| Command | Description |
+|---------|-------------|
+| `status` | Show link, network, TCP, RS485, web, firmware, cache, and coexistence status |
+| `reboot` | Restart the device |
+| `help` | Show available commands |
+| `wifi_restart` / `wifi_reconnect` | Restart or softly reconnect WiFi |
+| `wifi_roam` / `wifi_scan` | Force roaming scan or list visible APs |
+| `wifi_reset` | Clear WiFi credentials and open provisioning portal |
+| `probe_rs485` | Probe inverter serial registers |
+| `mqtt_status` | Show MQTT connection status if MQTT is enabled |
+| `ntp_sync` | Force NTP synchronization |
+| `heap` | Show heap/PSRAM diagnostics |
+| `tcp_clients` / `tcp_clients drop` | Inspect or disconnect TCP clients |
+| `pause` / `resume` / `pause_status` | Pause/resume RS485 bridge activity for maintenance |
+| `cache_status` / `cache_info` / `cache_clear` | Inspect or clear fallback cache |
 
 ### Web Dashboard
 
 Access via browser:
 ```
-http://openlux.local
+http://openlux
 # or
 http://<device-ip>
 ```
@@ -415,14 +456,16 @@ Features:
 
 Configure in `config.h`:
 ```cpp
-#define OPENLUX_LOG_LEVEL 1  // 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR, 4=NONE
+#define OPENLUX_LOG_LEVEL 2  // 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR, 4=NONE
 ```
 
-**DEBUG (0)**: Detailed packet dumps, frame-by-frame RS485 communication
-**INFO (1)**: Normal operations, connections, status updates (recommended)
-**WARN (2)**: Warnings and recoverable errors
-**ERROR (3)**: Critical errors only
-**NONE (4)**: No logging (not recommended)
+- **DEBUG (0)**: Detailed packet dumps, frame-by-frame RS485 communication
+- **INFO (1)**: Normal operations, connections, status updates
+- **WARN (2)**: Warnings and recoverable errors (default)
+- **ERROR (3)**: Critical errors only
+- **NONE (4)**: No logging (not recommended)
+
+Runtime logging can be changed without reflashing through `log_level`, for example `log_level 0`, `log_level rs485 0`, or `log_level reset`.
 
 ---
 
@@ -431,33 +474,33 @@ Configure in `config.h`:
 ### Resource Usage
 
 **Memory (ESP32 standard)**
-- RAM: ~43 KB / 328 KB (13.3%)
-- Flash: ~778 KB / 1.31 MB (59.3%)
+- RAM: ~53 KB / 328 KB (about 16%)
+- Flash: ~1.05 MB / 1.31 MB (about 80%)
 - PSRAM: Not required
 
 **Network**
-- TCP connections: Max 5 simultaneous clients
-- Packet latency: <50ms typical (WiFi ↔ RS485)
-- Throughput: ~100 requests/second (tested)
+- TCP connections: Max 3 simultaneous clients
+- Packet latency is dominated by the RS485 round-trip and Home Assistant polling pattern
+- Web status is cached briefly to reduce contention with the TCP/RS485 bridge path
+- TCP client shutdown is centralized in `TCPServer` so protocol errors, timeouts, and bridge failures all follow the same deferred `AsyncClient` cleanup path
 
 ### Stability
 
 **Watchdog Protection:**
-- WiFi reconnection after 5 minutes offline
-- WiFi restart after 10 minutes
-- Device reboot after 15 minutes
-- Captive portal after 20 minutes (one-time)
+- WiFi reconnection after 2 minutes offline
+- WiFi interface restart after 5 minutes offline
+- Device reboot after 10 minutes offline
 
 **Error Handling:**
 - CRC validation on all packets (TCP + RS485)
-- Timeout protection on RS485 (1000ms)
+- Timeout protection on RS485 (800ms)
 - Client timeout on TCP (5 minutes)
-- Automatic retry with exponential backoff
+- RS485 send retry path before cache/exception fallback
 
 **Recovery Mechanisms:**
 - Boot failure counter (auto-reset after N fails)
 - Network watchdog with staged recovery
-- RS485 probe retry with backoff
+- RS485 request pacing, retry, cache fallback, and coexistence backoff
 - OTA rollback protection (manual)
 
 ---
@@ -498,7 +541,7 @@ See [SECURITY.md](../SECURITY.md) for full security policy.
 
 ### Hardware
 - [ESP32 Technical Reference](https://www.espressif.com/sites/default/files/documentation/esp32_technical_reference_manual_en.pdf)
-- [RS485 Application Notes](docs/HARDWARE.md)
+- [RS485 Application Notes](HARDWARE.md)
 
 ### Development
 - [PlatformIO Documentation](https://docs.platformio.org/)
@@ -506,6 +549,6 @@ See [SECURITY.md](../SECURITY.md) for full security policy.
 
 ---
 
-**Document Version**: 1.0.5
-**Last Updated**: December 26, 2025
+**Document Version**: 2.0.0
+**Last Updated**: May 27, 2026
 **License**: GPL-3.0

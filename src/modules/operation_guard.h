@@ -23,7 +23,6 @@
  * Supports:
  * - TCP client processing
  * - RS485 communication
- * - Network validation (Gateway/MQTT checks)
  * - WiFi scanning (formerly ScanGuard)
  */
 class OperationGuard {
@@ -31,7 +30,6 @@ class OperationGuard {
     enum class OperationType : uint8_t {
         TCP_CLIENT_PROCESSING = 0, // TCP client data processing
         RS485_OPERATION = 1,       // RS485 communication
-        NETWORK_VALIDATION = 2,    // Gateway/MQTT connectivity check
         WIFI_SCAN = 3,             // WiFi scanning
         OTA_OPERATION = 4,         // Over-The-Air firmware update
     };
