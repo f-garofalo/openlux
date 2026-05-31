@@ -120,11 +120,31 @@ If logs show CRC mismatches, invalid function codes, very long malformed frames,
 - Use a twisted pair for A/B and keep stubs short.
 - Share GND between inverter, ESP32, and RS485 transceiver.
 - Verify A/B polarity with the actual transceiver labels; vendors are not always consistent.
-- Add or verify 120 ohm termination where appropriate for the cable topology.
+- Add or verify 120 ohm termination across RS485 A/B where appropriate for the cable topology.
 - Ensure failsafe biasing so the bus has a stable idle state. The official dongle may have been providing useful bias/termination in some installations.
 - Keep RS485 wiring away from inverter AC/DC power cables.
 - Compare an auto-direction module with a transceiver using explicit DE/RE control if long frames are corrupted.
 - Do not assume every "collision" log means a real second master; corrupted/noisy bytes can look like unrelated frames.
+
+### RS485 A/B termination note
+
+A resistor of about 120 ohm between RS485 A and B is the standard end-of-line
+termination for a twisted-pair RS485 bus. On noisy or longer wiring, and
+especially when OpenLux shares the inverter bus with the official dongle,
+adding or verifying this termination at the correct bus end can reduce CRC
+mismatches, malformed frames, timeouts, and client-visible communication
+errors.
+
+Do not add termination resistors at every device. RS485 normally expects
+termination only at the physical ends of the bus; extra parallel terminators
+lower the effective resistance and can overload or overheat weak transceivers.
+Avoid low-value resistors such as 20 ohm between A and B. If communication gets
+worse or the RS485 module heats up, power down and re-check wiring, polarity,
+existing termination, and module health.
+
+Termination is separate from failsafe biasing and grounding: a 120 ohm A/B
+resistor damps signal reflections, while bias resistors define the idle state
+and the common GND/shield strategy controls reference and noise paths.
 
 ## Safety
 - Use shielded cable for RS485 and, if recommended, tie the shield to GND on the inverter side.
