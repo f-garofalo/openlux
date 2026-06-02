@@ -84,6 +84,7 @@ Edit in `src/config.h`:
 #define RS485_TX_PIN 17
 #define RS485_RX_PIN 16
 #define RS485_DE_PIN -1  // current default: auto-direction/no DE control
+#define STATUS_LED_PIN 25 // optional green status LED, -1 to disable
 ```
 
 Common alternatives:
@@ -92,6 +93,10 @@ Common alternatives:
 ```
 
 Prefer explicit DE/RE control when comparing transceivers or debugging corrupted frames. Auto-direction modules can work, but their turn-around timing varies by board.
+
+The optional green status LED is driven by the ESP32. It blinks while the
+firmware is running but the inverter link is not established, then stays solid
+when the RS485 inverter link is up.
 
 ## Ethernet (optional)
 If your ESP32 board has Ethernet, set `OPENLUX_USE_ETHERNET` to `1` in `src/config.h` and adjust the PHY/pin parameters:

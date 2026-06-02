@@ -255,6 +255,7 @@ class ProtocolBridge {
     bool pending_rs485_send_retry_ = false;
     uint32_t last_request_time_ = 0;
     uint32_t last_send_attempt_time_ = 0;
+    uint32_t current_retry_delay_ms_ = RS485_SEND_RETRY_DELAY_MS;
     bool paused_ = false;
 
     // ========== Dual-dongle coexistence ==========
@@ -287,6 +288,7 @@ class ProtocolBridge {
 
     static constexpr uint32_t REQUEST_TIMEOUT_MS = 2000;
     static constexpr uint32_t RS485_SEND_RETRY_DELAY_MS = 120;
+    static constexpr uint32_t RS485_SEND_RETRY_JITTER_MS = 80;
     static constexpr uint32_t RS485_SEND_RETRY_WINDOW_MS = 1600;
     static constexpr uint8_t RS485_SEND_MAX_RETRIES = 14;
     static constexpr uint32_t FALLBACK_CACHE_MAX_AGE_MS = 45 * 1000;

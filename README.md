@@ -216,6 +216,7 @@ Default pins in `src/config.h` (change if needed):
 #define RS485_TX_PIN 17
 #define RS485_RX_PIN 16
 #define RS485_DE_PIN -1
+#define STATUS_LED_PIN 25
 ```
 
 Ethernet pins/PHY are also in `config.h` (only used when `OPENLUX_USE_ETHERNET=1`).
@@ -382,13 +383,11 @@ OpenLux is actively evolving! Here are planned enhancements for future releases:
 ### Hardware Improvements
 
 **🔴 Status LEDs**
-- Visual indication of system status
-- Multi-color LED for different states:
-  - 🟢 Green: Connected and running
-  - 🟡 Yellow: WiFi connecting/RS485 error
-  - 🔴 Red: System error
-  - 🔵 Blue: OTA update in progress
-- Configurable LED pin in `config.h`
+- Basic green status LED is implemented with `STATUS_LED_PIN`.
+- Current behavior:
+  - blinking: firmware running, inverter link not established yet
+  - solid: inverter RS485 link is up
+- Multi-color status indication can be added in a later hardware revision.
 
 **🔘 Physical Buttons**
 - **Reset/Reboot button**: Quick device restart without power cycle
@@ -398,14 +397,15 @@ OpenLux is actively evolving! Here are planned enhancements for future releases:
 
 **📟 Custom PCB Design**
 - Integrated all-in-one board design:
-  - ESP32 module (ESP32-WROOM or ESP32-S3)
-  - Built-in RS485 transceiver (isolated)
+  - soldered ESP32-WROOM module
+  - built-in RS485 transceiver with explicit DE/RE control
   - Status LEDs and control buttons
-  - HDMI connector for direct inverter connection (pins compatible with Luxpower)
-  - Screw terminals for A/B RS485 (alternative to HDMI)
-  - USB-C for power and programming
-  - Compact form factor for easy installation
-- Planned new open hardware design; current experimental PCB files are not release-ready
+  - HDMI male plug to inverter and HDMI female receptacle for official dongle
+  - transparent HDMI pass-through with protected OpenLux tap
+  - UART programming header
+  - dongle-style compact form factor
+- Rev A KiCad scaffold lives in `pcb/`; it is not fabrication-ready until the
+  HDMI male connector footprint is validated.
 - Optional 3D-printed enclosure
 
 ### Software Features

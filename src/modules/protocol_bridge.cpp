@@ -10,6 +10,8 @@
 #include "../config.h"
 #include "logger.h"
 
+#include <esp_random.h>
+
 #include <utility>
 
 #include <WiFi.h>
@@ -566,6 +568,8 @@ void ProtocolBridge::defer_current_request_retry(const char* reason) {
     waiting_rs485_response_ = false;
     last_send_attempt_time_ = millis();
     current_request_.retry_count = 0;
+    current_retry_delay_ms_ =
+        RS485_SEND_RETRY_DELAY_MS + (esp_random() % (RS485_SEND_RETRY_JITTER_MS + 1));
     set_current_state(BridgeWorkerState::RS485_RETRY);
 
     LOGD(TAG, "%s; keeping TCP client open and retrying for %lums", reason,
@@ -626,7 +630,7 @@ void ProtocolBridge::process_pending_rs485_send() {
         return;
     }
 
-    if (now - last_send_attempt_time_ < RS485_SEND_RETRY_DELAY_MS) {
+    if (now - last_send_attempt_time_ < current_retry_delay_ms_) {
         return;
     }
 
@@ -640,6 +644,8 @@ void ProtocolBridge::process_pending_rs485_send() {
 
     current_request_.retry_count++;
     last_send_attempt_time_ = now;
+    current_retry_delay_ms_ =
+        RS485_SEND_RETRY_DELAY_MS + (esp_random() % (RS485_SEND_RETRY_JITTER_MS + 1));
 
     if (!send_current_request_to_rs485()) {
         LOGD(TAG, "RS485 send retry %u still busy/failed for %s", current_request_.retry_count,

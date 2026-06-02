@@ -44,6 +44,18 @@
 // Logging tag
 static const char* TAG = "main";
 
+#ifndef STATUS_LED_PIN
+#define STATUS_LED_PIN -1
+#endif
+
+#ifndef STATUS_LED_ACTIVE_HIGH
+#define STATUS_LED_ACTIVE_HIGH 1
+#endif
+
+#ifndef STATUS_LED_BLINK_INTERVAL_MS
+#define STATUS_LED_BLINK_INTERVAL_MS 350
+#endif
+
 // Global singleton instances
 Logger& logger = Logger::getInstance();
 SystemManager& sys = SystemManager::getInstance();
@@ -63,6 +75,9 @@ void setupNTP();
 void setupRS485();
 void setupTCPServer();
 void setupBridge();
+void setupStatusLed();
+void updateStatusLed();
+void writeStatusLed(bool on);
 #ifdef ENABLE_WEB_DASH
 void setupWebServer();
 #endif
@@ -87,6 +102,9 @@ void setup() {
 
     // Initialize system manager (reads reboot reason)
     sys.begin();
+
+    // Setup optional hardware status LED as early as possible
+    setupStatusLed();
 
     // Setup RS485 (can start immediately, no network required)
     setupRS485();
@@ -145,6 +163,9 @@ void loop() {
     // Update protocol bridge (coordinates TCP ↔ RS485)
     bridge.loop();
 
+    // Update optional status LED after RS485 state has advanced
+    updateStatusLed();
+
 #ifdef ENABLE_WEB_DASH
     WebServerManager::getInstance().loop();
 #endif
@@ -191,6 +212,57 @@ void printSystemInfo() {
 #endif
 
     Serial.println();
+}
+
+/**
+ * @brief Write the optional status LED respecting active-high/active-low wiring
+ */
+void writeStatusLed(bool on) {
+    if (STATUS_LED_PIN < 0) {
+        return;
+    }
+
+    const bool active_high = STATUS_LED_ACTIVE_HIGH != 0;
+    digitalWrite(STATUS_LED_PIN, (on == active_high) ? HIGH : LOW);
+}
+
+/**
+ * @brief Initialize optional ESP32-controlled status LED
+ */
+void setupStatusLed() {
+    if (STATUS_LED_PIN < 0) {
+        return;
+    }
+
+    pinMode(STATUS_LED_PIN, OUTPUT);
+    writeStatusLed(false);
+}
+
+/**
+ * @brief Blink until inverter link is up, then hold the LED on
+ */
+void updateStatusLed() {
+    if (STATUS_LED_PIN < 0) {
+        return;
+    }
+
+    static bool led_on = false;
+    static uint32_t last_toggle_ms = 0;
+
+    if (rs485.is_inverter_link_up()) {
+        if (!led_on) {
+            led_on = true;
+            writeStatusLed(true);
+        }
+        return;
+    }
+
+    const uint32_t now = millis();
+    if (last_toggle_ms == 0 || now - last_toggle_ms >= STATUS_LED_BLINK_INTERVAL_MS) {
+        last_toggle_ms = now;
+        led_on = !led_on;
+        writeStatusLed(led_on);
+    }
 }
 
 /**

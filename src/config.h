@@ -51,6 +51,19 @@
 #define RS485_DE_PIN -1       ///< Direction control (-1 = auto/disabled, or GPIO number)
 #define RS485_BAUD_RATE 19200 ///< Fixed baud rate (per Inverter spec)
 
+/**
+ * @brief Optional ESP32-controlled status LED
+ *
+ * Rev A PCB uses a green LED on GPIO25:
+ * - Blinking: firmware is running but inverter link is not up yet
+ * - Solid ON: inverter RS485 link is up
+ *
+ * Set STATUS_LED_PIN to -1 to disable.
+ */
+#define STATUS_LED_PIN -1
+#define STATUS_LED_ACTIVE_HIGH 1
+#define STATUS_LED_BLINK_INTERVAL_MS 350
+
 // Ethernet (adjust pins/phy for your board if OPENLUX_USE_ETHERNET=1)
 #define ETH_PHY_TYPE ETH_PHY_LAN8720
 #define ETH_PHY_ADDR 0
@@ -273,7 +286,9 @@
 #define RS485_PROBE_BACKOFF_MAX_MS (5 * 60 * 1000) ///< Max backoff for RS485 probe retry
 #define RS485_UART_RX_BUFFER_SIZE 1024 ///< UART RX ring buffer for full 125-register frames
 #define RS485_MIN_REQUEST_GAP_MS 120   ///< Quiet time between serialized RS485 requests
-#define RS485_COEXISTENCE_ENABLED 1    ///< Enable dual-master coexistence backoff/cache mode
+#define RS485_EXTERNAL_BUSY_HOLD_MS \
+    1100 ///< Bus-busy hold (ms) after an external/foreign frame; raise if dongle frames exceed this
+#define RS485_COEXISTENCE_ENABLED 1 ///< Enable dual-master coexistence backoff/cache mode
 #define RS485_COEXISTENCE_TRIGGER_EVENTS \
     2 ///< Consecutive contention events before quiet-window backoff
 #define RS485_COEXISTENCE_BACKOFF_MS 8000 ///< Quiet window after detected RS485 contention

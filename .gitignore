@@ -180,6 +180,13 @@ docs/doxygen/
 *.h.bak
 *.cpp.bak
 
+# KiCad local/generated state
+*.kicad_prl
+*-backups/
+**/fp-info-cache
+**/.history/
+*.lck
+
 # =============================================================================
 # KEEP THESE FILES
 # =============================================================================
@@ -191,6 +198,8 @@ docs/doxygen/
 !docs/**/*.md
 # But exclude these sensitive docs
 docs/PROTOCOL_DETAILS.md
+# Local-only context/notes (never commit)
+docs/*.local.md
 !README.md
 !LICENSE
 !CONTRIBUTING.md

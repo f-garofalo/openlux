@@ -324,7 +324,7 @@ bool RS485Manager::should_ignore_packet(const std::vector<uint8_t>& data) {
                  InverterProtocol::format_hex(data.data(), min(data.size(), (size_t) 18)).c_str());
             external_requests_detected_++;
 
-            bus_busy_until_ms_ = millis() + 1100;
+            bus_busy_until_ms_ = millis() + RS485_EXTERNAL_BUSY_HOLD_MS;
             LOGI(TAG, "⚠️ RS485_BUS_BUSY: Pausing");
         }
         ignored_packets_++;
