@@ -64,7 +64,6 @@ class RS485Manager {
     uint32_t get_timeout_count() const { return timeout_count_; }
     uint32_t get_ignored_packets() const { return ignored_packets_; }
     uint32_t get_external_requests_detected() const { return external_requests_detected_; }
-    uint32_t get_bus_busy_remaining_ms() const;
 
   private:
     RS485Manager() = default;
