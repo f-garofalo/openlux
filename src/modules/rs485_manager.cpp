@@ -45,15 +45,18 @@ const char* RS485Manager::function_code_to_string(ModbusFunctionCode func) {
 }
 
 bool RS485Manager::is_bus_busy() const {
-    return millis() < bus_busy_until_ms_;
-}
-
-uint32_t RS485Manager::get_bus_busy_remaining_ms() const {
-    const uint32_t now = millis();
-    if ((int32_t) (bus_busy_until_ms_ - now) <= 0) {
-        return 0;
-    }
-    return bus_busy_until_ms_ - now;
+    // (1) Idle-tail timer: refreshed on every foreign frame. Keeps the bus "busy"
+    //     until the line has been quiet for RS485_FOREIGN_IDLE_TAIL_MS, which
+    //     bridges the foreign request->response turnaround so we never transmit
+    //     into the gap and clobber the inverter's reply to the other master.
+    if ((int32_t) (bus_busy_until_ms_ - millis()) > 0)
+        return true;
+    // (2) Instant carrier sense: bytes are arriving on the line right now (a frame
+    //     is mid-assembly). Closes the window between the first foreign byte and
+    //     the moment the frame is classified (one inter-frame delay later).
+    if (!rx_buffer_.empty() && (millis() - last_rx_time_) <= MODBUS_INTER_FRAME_DELAY_MS)
+        return true;
+    return false;
 }
 
 void RS485Manager::begin(HardwareSerial& serial, int8_t tx_pin, int8_t rx_pin, int8_t de_pin,
@@ -108,6 +111,13 @@ void RS485Manager::request_inverter_serial_probe() {
         return;
     }
 
+    // Carrier sense: never probe onto a bus that is busy with foreign traffic.
+    // (loop() no longer guards this, so the gate must live here.)
+    if (is_bus_busy()) {
+        LOGD(TAG, "Skipping inverter serial probe: bus busy with foreign traffic");
+        return;
+    }
+
     if (millis() < next_serial_probe_ms_)
         return;
 
@@ -139,14 +149,11 @@ void RS485Manager::loop() {
     if (!initialized_)
         return;
 
-    // ========== RS485_BUS_BUSY CHECK ==========
-    // If bus is busy (external traffic detected), don't process anything
-    if (is_bus_busy()) {
-        LOGD(TAG, "RS485_BUS_BUSY: Skipping processing (%lums remaining)",
-             bus_busy_until_ms_ - millis());
-        return;
-    }
-    // ========== END BUS BUSY CHECK ==========
+    // Always listen: drain + classify RX every loop, even while the bus is busy
+    // with foreign traffic, so the "ear" stays continuous and is_bus_busy() tracks
+    // the real line state. Transmitting is still gated by is_bus_busy() inside
+    // send_read_request()/send_write_request() and the probe, so we never transmit
+    // on a busy bus.
 
     // Auto-probe when link is down
     if (!inverter_link_ok_ && !serial_probe_pending_ && !waiting_response_ &&
@@ -314,7 +321,7 @@ bool RS485Manager::should_ignore_packet(const std::vector<uint8_t>& data) {
     if (data.empty())
         return true;
 
-    // Ignore requests from another master (address 0x00)
+    // Foreign request from another master (address 0x00): not ours.
     if (InverterProtocol::is_request(data.data(), data.size())) {
         if (data.size() >= 3) {
             uint8_t addr = data[0];
@@ -323,17 +330,20 @@ bool RS485Manager::should_ignore_packet(const std::vector<uint8_t>& data) {
                  func, data.size(),
                  InverterProtocol::format_hex(data.data(), min(data.size(), (size_t) 18)).c_str());
             external_requests_detected_++;
-
-            bus_busy_until_ms_ = millis() + RS485_EXTERNAL_BUSY_HOLD_MS;
-            LOGI(TAG, "⚠️ RS485_BUS_BUSY: Pausing");
         }
+        // Foreign frame seen: refresh the idle-tail so the bus stays busy until the
+        // line is quiet for RS485_FOREIGN_IDLE_TAIL_MS (covers the upcoming reply).
+        bus_busy_until_ms_ = millis() + RS485_FOREIGN_IDLE_TAIL_MS;
         ignored_packets_++;
         return true;
     }
 
-    // Ignore if we're not waiting for a response
+    // Not a request and we're not awaiting our own response: this is a cold foreign
+    // response (the inverter answering the other master). Still foreign bus
+    // activity, so refresh the idle-tail too.
     if (!waiting_response_) {
-        LOGD(TAG, "Ignoring packet while not waiting for response");
+        LOGD(TAG, "Ignoring foreign frame while not awaiting our response");
+        bus_busy_until_ms_ = millis() + RS485_FOREIGN_IDLE_TAIL_MS;
         ignored_packets_++;
         return true;
     }

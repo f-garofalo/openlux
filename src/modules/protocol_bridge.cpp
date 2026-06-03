@@ -78,172 +78,6 @@ TCPClient* ProtocolBridge::resolve_current_client() {
     return tcp_server_->resolve_client(current_request_.client_handle);
 }
 
-uint32_t ProtocolBridge::get_coexistence_backoff_remaining_ms() const {
-#if !RS485_COEXISTENCE_ENABLED
-    return 0;
-#else
-    const uint32_t now = millis();
-    if ((int32_t) (coexistence_backoff_until_ms_ - now) <= 0) {
-        return 0;
-    }
-    return coexistence_backoff_until_ms_ - now;
-#endif
-}
-
-bool ProtocolBridge::is_coexistence_backoff_active() const {
-#if !RS485_COEXISTENCE_ENABLED
-    return false;
-#else
-    return get_coexistence_backoff_remaining_ms() > 0;
-#endif
-}
-
-uint32_t ProtocolBridge::get_coexistence_pressure_remaining_ms() const {
-#if !RS485_COEXISTENCE_ENABLED
-    return 0;
-#else
-    const uint32_t backoff_ms = get_coexistence_backoff_remaining_ms();
-    if (backoff_ms > 0) {
-        return backoff_ms;
-    }
-
-    if (last_coexistence_event_ms_ == 0) {
-        return 0;
-    }
-
-    const uint32_t elapsed_ms = millis() - last_coexistence_event_ms_;
-    if (elapsed_ms >= RS485_COEXISTENCE_PRESSURE_WINDOW_MS) {
-        return 0;
-    }
-    return RS485_COEXISTENCE_PRESSURE_WINDOW_MS - elapsed_ms;
-#endif
-}
-
-bool ProtocolBridge::is_coexistence_pressure_active() const {
-    return get_coexistence_pressure_remaining_ms() > 0;
-}
-
-bool ProtocolBridge::is_coexistence_error(const String& error) const {
-#if !RS485_COEXISTENCE_ENABLED
-    return false;
-#else
-    return error == "Timeout" || error.indexOf("other master") >= 0 ||
-           error.indexOf("collision") >= 0 || error.indexOf("Invalid response frame") >= 0 ||
-           error.indexOf("No valid frames") >= 0;
-#endif
-}
-
-void ProtocolBridge::note_rs485_contention(const char* reason, bool immediate_backoff) {
-#if !RS485_COEXISTENCE_ENABLED
-    (void) reason;
-    (void) immediate_backoff;
-    return;
-#else
-    last_coexistence_event_ms_ = millis();
-    coexistence_events_++;
-    if (consecutive_contention_events_ < 255) {
-        consecutive_contention_events_++;
-    }
-
-    if (!immediate_backoff && consecutive_contention_events_ < RS485_COEXISTENCE_TRIGGER_EVENTS) {
-        LOGI(TAG, "RS485 contention marker %u/%u: %s", consecutive_contention_events_,
-             RS485_COEXISTENCE_TRIGGER_EVENTS, reason ? reason : "unknown");
-        return;
-    }
-
-    const uint32_t now = millis();
-    const uint32_t until = now + RS485_COEXISTENCE_BACKOFF_MS;
-    const bool was_active = is_coexistence_backoff_active();
-    coexistence_backoff_until_ms_ = until;
-
-    LOGW(TAG, "%scoexistence backoff for %lums after RS485 contention: %s",
-         was_active ? "Extending " : "Entering ", RS485_COEXISTENCE_BACKOFF_MS,
-         reason ? reason : "unknown");
-#endif
-}
-
-void ProtocolBridge::reset_rs485_contention() {
-    if (consecutive_contention_events_ > 0 && !is_coexistence_backoff_active()) {
-        LOGI(TAG, "RS485 contention cleared after successful fresh response");
-    }
-    consecutive_contention_events_ = 0;
-}
-
-bool ProtocolBridge::try_coexistence_backoff_for_current_request(const char* reason) {
-    const uint32_t remaining_ms = get_coexistence_backoff_remaining_ms();
-    if (remaining_ms == 0) {
-        return false;
-    }
-
-    set_current_state(BridgeWorkerState::COEXISTENCE_BACKOFF);
-
-    if (try_coexistence_cache_for_current_request(reason, true)) {
-        return true;
-    }
-
-    LOGW(TAG, "[REQ#%u] Coexistence backoff active (%lums left) but no fresh cache is available",
-         current_request_.id, remaining_ms);
-    send_error_response("RS485 coexistence backoff active");
-    failed_requests_++;
-    finish_current_request(BridgeWorkerState::FAILED);
-    return true;
-}
-
-bool ProtocolBridge::try_coexistence_cache_for_current_request(const char* reason, bool required) {
-#if !RS485_COEXISTENCE_ENABLED
-    (void) reason;
-    (void) required;
-    return false;
-#else
-    if (current_request_.wifi_request.is_write_operation) {
-        return false;
-    }
-
-    ReadCacheKey cache_key{current_request_.wifi_request.function_code,
-                           current_request_.wifi_request.start_register,
-                           current_request_.wifi_request.register_count};
-
-    std::vector<uint8_t> cached_response;
-    uint32_t age_ms = 0;
-    bool found = false;
-    if (!get_cached_response(cache_key, cached_response, RS485_COEXISTENCE_CACHE_MAX_AGE_MS,
-                             &age_ms, &found, true)) {
-        if (found) {
-            coexistence_cache_stale_++;
-            if (required) {
-                LOGW(TAG, "[REQ#%u] Coexistence cache stale for %s (age=%lums > %lums)",
-                     current_request_.id, cache_key.format().c_str(), age_ms,
-                     RS485_COEXISTENCE_CACHE_MAX_AGE_MS);
-            } else {
-                LOGD(TAG, "[REQ#%u] Coexistence cache stale for %s (age=%lums)",
-                     current_request_.id, cache_key.format().c_str(), age_ms);
-            }
-        } else {
-            coexistence_cache_misses_++;
-            if (required) {
-                LOGW(TAG, "[REQ#%u] No coexistence cache entry for %s", current_request_.id,
-                     cache_key.format().c_str());
-            }
-        }
-        return false;
-    }
-
-    set_current_state(BridgeWorkerState::CACHE_FALLBACK);
-    if (!send_response_to_client(cached_response, cached_response.size())) {
-        failed_requests_++;
-        finish_current_request(BridgeWorkerState::FAILED);
-        return true;
-    }
-
-    coexistence_cache_hits_++;
-    successful_requests_++;
-    LOGI(TAG, "[REQ#%u] Served coexistence cache for %s (%s, age=%lums)", current_request_.id,
-         cache_key.format().c_str(), reason ? reason : "coexistence", age_ms);
-    finish_current_request(BridgeWorkerState::CACHE_FALLBACK);
-    return true;
-#endif
-}
-
 void ProtocolBridge::process_wifi_request(const uint8_t* data, size_t length, TCPClient* client) {
     if (!is_ready()) {
         LOGW(TAG, "Bridge not ready (tcp_server=%p, rs485=%p)", tcp_server_, rs485_);
@@ -386,8 +220,6 @@ const char* ProtocolBridge::worker_state_name(BridgeWorkerState state) {
             return "RS485_RETRY";
         case BridgeWorkerState::WAIT_RESPONSE:
             return "WAIT_RESPONSE";
-        case BridgeWorkerState::COEXISTENCE_BACKOFF:
-            return "COEXISTENCE_BACKOFF";
         case BridgeWorkerState::CACHE_FALLBACK:
             return "CACHE_FALLBACK";
         case BridgeWorkerState::RESPOND_TCP:
@@ -487,24 +319,9 @@ void ProtocolBridge::start_current_request() {
 
     set_current_state(BridgeWorkerState::RS485_SEND);
 
-    if (try_coexistence_backoff_for_current_request("coexistence backoff")) {
-        return;
-    }
-
-    if (is_coexistence_pressure_active() &&
-        try_coexistence_cache_for_current_request("recent RS485 contention", false)) {
-        return;
-    }
-
-    if (rs485_) {
-        const uint32_t bus_busy_ms = rs485_->get_bus_busy_remaining_ms();
-        if (bus_busy_ms > 0) {
-            note_rs485_contention("external RS485 traffic detected", true);
-            if (try_coexistence_backoff_for_current_request("external RS485 traffic")) {
-                return;
-            }
-        }
-    }
+    // Carrier sense: if the bus is busy with foreign traffic, the send below
+    // returns false and the request is deferred to the retry loop, which waits
+    // for the line to go idle (jittered). No separate backoff window needed.
 
     LOGD(TAG, "[REQ#%u] RS485 packet: %s", current_request_.id,
          TcpProtocol::format_hex(current_request_.wifi_request.rs485_packet.data(),
@@ -604,25 +421,6 @@ void ProtocolBridge::process_pending_rs485_send() {
 
     const uint32_t now = millis();
     const uint32_t age_ms = now - current_request_.timestamp;
-
-    if (try_coexistence_backoff_for_current_request("coexistence backoff during RS485 retry")) {
-        return;
-    }
-
-    if (is_coexistence_pressure_active() &&
-        try_coexistence_cache_for_current_request("recent RS485 contention during retry", false)) {
-        return;
-    }
-
-    if (rs485_) {
-        const uint32_t bus_busy_ms = rs485_->get_bus_busy_remaining_ms();
-        if (bus_busy_ms > 0) {
-            note_rs485_contention("external RS485 traffic detected during retry", true);
-            if (try_coexistence_backoff_for_current_request("external RS485 traffic")) {
-                return;
-            }
-        }
-    }
 
     if (age_ms >= RS485_SEND_RETRY_WINDOW_MS ||
         current_request_.retry_count >= RS485_SEND_MAX_RETRIES) {
@@ -899,9 +697,9 @@ BridgeWorkerState ProtocolBridge::handle_rs485_success(const ParseResult& rs485_
              current_request_.wifi_request.start_register, expected_count,
              static_cast<uint8_t>(rs485_result.function_code), rs485_result.start_address,
              rs485_result.register_count);
-        note_rs485_contention("response mismatch/not ours", true);
 
-        // Fix #6: on a mismatch (typically dual-master collision), don't hard-fail.
+        // On a mismatch (typically a dual-master collision: the frame on the bus
+        // is not the answer to our request), don't hard-fail.
         // A cached read response is better than an error from HA's perspective.
         if (try_fallback_cache_on_error(rs485_result)) {
             LOGI(TAG, "Mismatch recovered via fallback cache");
@@ -921,7 +719,6 @@ BridgeWorkerState ProtocolBridge::handle_rs485_success(const ParseResult& rs485_
     LOGI(TAG, "[REQ#%u] OK func=0x%02X regs=%d start=%d time=%lums%s", current_request_.id,
          static_cast<uint8_t>(rs485_result.function_code), rs485_result.register_count,
          rs485_result.start_address, elapsed, value_summary);
-    reset_rs485_contention();
 
     if (send_wifi_response(rs485_result)) {
         successful_requests_++;
@@ -937,10 +734,6 @@ BridgeWorkerState ProtocolBridge::handle_rs485_success(const ParseResult& rs485_
 
 BridgeWorkerState ProtocolBridge::handle_rs485_error(const ParseResult& rs485_result,
                                                      unsigned long elapsed) {
-    if (is_coexistence_error(rs485_result.error_message)) {
-        note_rs485_contention(rs485_result.error_message.c_str(), false);
-    }
-
     // ========== TRY FALLBACK CACHE FIRST ==========
     // This is critical for handling collisions/mismatches
     // Even if response is mismatch, cache might have valid data

@@ -90,7 +90,6 @@ enum class BridgeWorkerState : uint8_t {
     RS485_SEND,
     RS485_RETRY,
     WAIT_RESPONSE,
-    COEXISTENCE_BACKOFF,
     CACHE_FALLBACK,
     RESPOND_TCP,
     DONE,
@@ -157,13 +156,6 @@ class ProtocolBridge {
         return worker_state_name(last_terminal_state_);
     }
     uint32_t get_last_finished_elapsed_ms() const { return last_finished_elapsed_ms_; }
-    uint32_t get_coexistence_backoff_remaining_ms() const;
-    uint32_t get_coexistence_pressure_remaining_ms() const;
-    uint32_t get_coexistence_event_count() const { return coexistence_events_; }
-    uint32_t get_coexistence_cache_hits() const { return coexistence_cache_hits_; }
-    uint32_t get_coexistence_cache_stale_count() const { return coexistence_cache_stale_; }
-    uint32_t get_coexistence_cache_miss_count() const { return coexistence_cache_misses_; }
-    uint8_t get_consecutive_contention_events() const { return consecutive_contention_events_; }
 
     // ========== Cache Status Methods ==========
     size_t get_cache_size() const { return fallback_cache_.size(); }
@@ -204,13 +196,6 @@ class ProtocolBridge {
     void set_current_state(BridgeWorkerState state);
     static const char* worker_state_name(BridgeWorkerState state);
     static bool validate_response_match(const ParseResult& result, const TcpParseResult& request);
-    bool is_coexistence_backoff_active() const;
-    bool is_coexistence_pressure_active() const;
-    void note_rs485_contention(const char* reason, bool immediate_backoff = false);
-    void reset_rs485_contention();
-    bool is_coexistence_error(const String& error) const;
-    bool try_coexistence_backoff_for_current_request(const char* reason);
-    bool try_coexistence_cache_for_current_request(const char* reason, bool required);
     bool send_wifi_response(const ParseResult& rs485_result);
     void send_error_response(const String& error);
     bool send_gateway_target_failed_response(const String& reason);
@@ -257,15 +242,6 @@ class ProtocolBridge {
     uint32_t last_send_attempt_time_ = 0;
     uint32_t current_retry_delay_ms_ = RS485_SEND_RETRY_DELAY_MS;
     bool paused_ = false;
-
-    // ========== Dual-dongle coexistence ==========
-    uint32_t coexistence_backoff_until_ms_ = 0;
-    uint32_t last_coexistence_event_ms_ = 0;
-    uint32_t coexistence_events_ = 0;
-    uint32_t coexistence_cache_hits_ = 0;
-    uint32_t coexistence_cache_stale_ = 0;
-    uint32_t coexistence_cache_misses_ = 0;
-    uint8_t consecutive_contention_events_ = 0;
 
     // ========== Fallback Cache ==========
     std::map<ReadCacheKey, ReadCacheEntry> fallback_cache_;

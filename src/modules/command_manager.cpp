@@ -285,26 +285,6 @@ void CommandManager::registerCoreCommands() {
                         msg += "/";
                         msg += String(bridge.get_last_finished_elapsed_ms());
                         msg += "ms";
-                        msg += " coex=";
-#if RS485_COEXISTENCE_ENABLED
-                        msg += String(bridge.get_coexistence_backoff_remaining_ms());
-                        msg += "ms";
-                        msg += " coex_pressure=";
-                        msg += String(bridge.get_coexistence_pressure_remaining_ms());
-                        msg += "ms";
-#else
-                        msg += "off";
-#endif
-                        msg += " coex_events=";
-                        msg += String(bridge.get_coexistence_event_count());
-                        msg += " coex_cache=";
-                        msg += String(bridge.get_coexistence_cache_hits());
-                        msg += " coex_stale=";
-                        msg += String(bridge.get_coexistence_cache_stale_count());
-                        msg += " coex_miss=";
-                        msg += String(bridge.get_coexistence_cache_miss_count());
-                        msg += " coex_seq=";
-                        msg += String(bridge.get_consecutive_contention_events());
 
 #ifdef ENABLE_WEB_DASH
                         {
