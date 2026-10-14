@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - Placeholder for future changes.
 
+## [2.0.1] - 2026-10-14
+### Fixed
+- **Fallback cache invalidated on write**: when a write (`0x06`/`0x10`) is sent to the inverter, cached holding-register reads (`0x03`) that cover the written registers are dropped. Previously a read failing on RS485 right after a write could be answered from the pre-write cache, so the client saw the old value again. LuxPower HA integration v1.1.1 re-reads the settings block immediately after every write and stores the result, which made this likely; on the packed register 21 it could also undo an earlier switch change. Invalidations are counted in `cache_invalidations`.
+
 ## [2.0.0] - 2026-05-29
 ### Added
 - **RS485 worker queue**: TCP requests are now parsed and queued, while a single bridge worker serializes all inverter access.

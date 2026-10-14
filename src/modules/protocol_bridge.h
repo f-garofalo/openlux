@@ -215,6 +215,7 @@ class ProtocolBridge {
     bool try_fallback_cache_for_current_request(const char* reason);
     bool send_response_to_client(const std::vector<uint8_t>& response, size_t response_size);
     void evict_oldest_cache_entry();
+    void invalidate_cache_for_write(const TcpParseResult& request);
 
     // ========== RS485 Response Handling ==========
     BridgeWorkerState handle_rs485_success(const ParseResult& rs485_result, unsigned long elapsed);

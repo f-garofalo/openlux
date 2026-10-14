@@ -373,7 +373,13 @@ bool ProtocolBridge::send_current_request_to_rs485() {
     const TcpParseResult& request = current_request_.wifi_request;
 
     if (request.is_write_operation) {
-        return rs485_->send_write_request(request.start_register, request.write_values);
+        if (!rs485_->send_write_request(request.start_register, request.write_values)) {
+            return false;
+        }
+        // Once the write is on the bus the inverter may apply it even if the ack is
+        // lost, so drop cached reads of these registers now rather than on success.
+        invalidate_cache_for_write(request);
+        return true;
     }
 
     ModbusFunctionCode func = static_cast<ModbusFunctionCode>(request.function_code);
@@ -966,6 +972,34 @@ void ProtocolBridge::evict_oldest_cache_entry() {
              oldest->first.format().c_str(), oldest->second.get_age(now_ms));
         fallback_cache_.erase(oldest);
         cache_invalidations_++;
+    }
+}
+
+void ProtocolBridge::invalidate_cache_for_write(const TcpParseResult& request) {
+    if (!request.is_write_operation || request.write_values.empty()) {
+        return;
+    }
+
+    // A cached holding read covering the written registers predates the write.
+    // Serving it as fallback (e.g. to the client's post-write re-read) would hand
+    // back the old value and undo the write on the client side.
+    const uint32_t write_start = request.start_register;
+    const uint32_t write_end = write_start + request.write_values.size(); // exclusive
+
+    for (auto it = fallback_cache_.begin(); it != fallback_cache_.end();) {
+        const ReadCacheKey& key = it->first;
+        const uint32_t cache_start = key.start_register;
+        const uint32_t cache_end = cache_start + key.register_count; // exclusive
+
+        if (key.function_code == static_cast<uint8_t>(ModbusFunctionCode::READ_HOLDING) &&
+            cache_start < write_end && write_start < cache_end) {
+            LOGD(TAG, "Invalidating cache entry %s after write to regs %u-%u", key.format().c_str(),
+                 (unsigned) write_start, (unsigned) (write_end - 1));
+            it = fallback_cache_.erase(it);
+            cache_invalidations_++;
+        } else {
+            ++it;
+        }
     }
 }
 
