@@ -201,7 +201,9 @@ TcpParseResult TcpProtocol::parse_request(const uint8_t* data, size_t length) {
                 return result;
             }
 
-            data_frame_size = TcpProtocolOffsets::VALUES_START + byte_count; // fixed header + data
+            // fixed header + data + trailing CRC (the CRC check below treats the last 2 bytes
+            // of data_frame_size as the CRC, as it does for write-single)
+            data_frame_size = TcpProtocolOffsets::VALUES_START + byte_count + 2;
 
             size_t min_len = TcpProtocolOffsets::DATA_FRAME + data_frame_size;
             if (length < min_len) {

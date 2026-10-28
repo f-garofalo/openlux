@@ -3,7 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
-- Placeholder for future changes.
+### Fixed
+- **Write-multiple (0x10) requests were always rejected**: the TCP request parser sized the data frame without its trailing CRC, so the CRC check compared the CRC of the header bytes against the last register value and failed with `CRC mismatch` (closing the client). Write-multiple frames from a real client, e.g. lxp-bridge's `timesync` setting the inverter clock, now parse and are forwarded to the inverter.
 
 ## [2.0.1] - 2026-10-14
 ### Fixed
