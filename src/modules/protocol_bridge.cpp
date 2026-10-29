@@ -593,7 +593,9 @@ void ProtocolBridge::send_error_response(const String& error) {
     const std::vector<uint8_t>& raw_response = rs485_->get_last_raw_response();
     const ParseResult& last_result = rs485_->get_last_result();
 
-    if (!raw_response.empty() &&
+    // Forward raw bytes only when they are the inverter's exception for this request;
+    // anything else (garbage, another master's frame) must not reach the client.
+    if (last_result.is_exception && !raw_response.empty() &&
         validate_response_match(last_result, current_request_.wifi_request)) {
         // We have the raw exception response from inverter - forward it to client
         std::vector<uint8_t> wifi_response;
@@ -615,7 +617,7 @@ void ProtocolBridge::send_error_response(const String& error) {
             return;
         }
     } else if (!raw_response.empty()) {
-        LOGW(TAG, "Raw RS485 error does not match current request; not forwarding stale data");
+        LOGW(TAG, "Raw RS485 data is not an exception for the current request; not forwarding it");
     }
 
     if (send_gateway_target_failed_response(error)) {

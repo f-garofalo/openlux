@@ -93,6 +93,7 @@ enum class ModbusFunctionCode : uint8_t {
  */
 struct ParseResult {
     bool success = false;
+    bool is_exception = false; // CRC-valid Modbus exception reply (func | 0x80)
     ModbusFunctionCode function_code = ModbusFunctionCode::READ_INPUT;
     uint16_t start_address = 0;
     uint16_t register_count = 0;

@@ -294,6 +294,20 @@ static ParseResult parse_exception_response(const uint8_t* data, size_t length) 
            MODBUS_SERIAL_NUMBER_LENGTH);
 
     if (length >= MODBUS_MIN_EXCEPTION_SIZE) {
+        // Only a CRC-valid frame counts as the inverter's answer; it may then be
+        // matched to the request and forwarded to the TCP client.
+        const size_t crc_offset = MODBUS_MIN_EXCEPTION_SIZE - 2;
+        const uint16_t calculated_crc = InverterProtocol::calculate_crc16(data, crc_offset);
+        const uint16_t received_crc =
+            InverterProtocol::parse_little_endian_uint16(data, crc_offset);
+        if (calculated_crc != received_crc) {
+            result.error_message = "Exception response CRC mismatch";
+            LOGW(TAG, "%s: calculated=0x%04X, received=0x%04X", result.error_message.c_str(),
+                 calculated_crc, received_crc);
+            return result;
+        }
+        result.is_exception = true;
+
         const uint16_t failed_register =
             InverterProtocol::parse_little_endian_uint16(data, InverterProtocolOffsets::START_REG);
         result.start_address = failed_register;
@@ -679,9 +693,12 @@ int InverterProtocol::find_matching_response_index(const std::vector<FrameInfo>&
         if (frame.is_request)
             continue;
 
-        if (frame.result.success && frame.result.function_code == expected_func &&
+        // An exception for our function and start register is also the inverter's
+        // answer to our request; it carries no register count to compare.
+        const bool answered = frame.result.success || frame.result.is_exception;
+        if (answered && frame.result.function_code == expected_func &&
             frame.result.start_address == expected_start_reg &&
-            (expected_register_count == 0 ||
+            (frame.result.is_exception || expected_register_count == 0 ||
              frame.result.register_count == expected_register_count)) {
             return static_cast<int>(i);
         }
