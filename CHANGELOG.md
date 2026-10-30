@@ -3,7 +3,12 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
-- Placeholder for future changes.
+### Fixed
+- **RS485 requests stopped after 24.8 days of uptime**: the foreign-traffic idle-tail check introduced in 2.0.1 compared a deadline with a signed difference. With OpenLux as the only master on the bus that deadline stayed at 0, so from `millis()` = 2^31 (24.8 days) until the counter wrapped (49.7 days) the bus always read as busy and no request reached the inverter. The idle-tail is now stored as the time of the last foreign frame and checked by elapsed time, which is correct across the wraparound.
+- **Device stayed offline after 5 failed boots**: when the boot-failure threshold was reached, `begin()` opened the provisioning portal and then returned without starting the network task, so after the portal timed out there was no TCP server, OTA or WiFi watchdog until a power cycle. A router outage of about 50 minutes was enough (the WiFi watchdog reboots every 10 minutes). Start-up now always continues. With credentials compiled into the firmware the portal is skipped, since it cannot change them. The first-boot portal now pauses the 30 s task watchdog, as the recovery portal already did.
+- **Main loop blocked while NTP was unreachable**: until the clock was synced, every loop iteration waited up to 5 s for SNTP, so with no internet access almost every RS485 request timed out. The loop now only polls the clock once per second, and the start-up wait is 2 s instead of 10 s.
+- **Unmatched RS485 bytes could still be forwarded as an exception**: when a reply contained no valid frame, the previous transaction's `is_exception` flag survived, so if that transaction had been an exception for the same block the bridge could forward the unparsed bytes to the client. This failure path, and the "response not found" one, now start from a clean result.
+- **Unsupported Modbus function codes reached the inverter**: TCP requests with a function code other than `0x03`, `0x04`, `0x06` and `0x10` were sent to the inverter as reads. They are now rejected by the parser.
 
 ## [2.0.3] - 2026-10-30
 ### Added

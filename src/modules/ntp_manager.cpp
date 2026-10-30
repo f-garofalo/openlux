@@ -14,6 +14,12 @@
 
 static const char* TAG = "ntp";
 
+// begin() runs in the network task on every (re)connect: wait briefly so the
+// usual quick sync is logged at start-up, but never long enough to delay the
+// other services when NTP is unreachable. loop() picks up a later sync.
+static constexpr uint32_t INITIAL_SYNC_WAIT_MS = 2000;
+static constexpr uint32_t SYNC_POLL_INTERVAL_MS = 1000;
+
 NTPManager& NTPManager::getInstance() {
     static NTPManager instance;
     return instance;
@@ -35,8 +41,8 @@ void NTPManager::begin(const char* ntp_server1, const char* ntp_server2, const c
     // Set default timezone (CET/CEST - Italy/Rome)
     setTimezone(timezone_);
 
-    // Wait for time sync
-    if (waitForSync()) {
+    // Wait briefly for time sync
+    if (waitForSync(INITIAL_SYNC_WAIT_MS)) {
         time_synced_ = true;
         last_sync_millis_ = millis();
         LOGI(TAG, "Time synchronized successfully!");
@@ -55,19 +61,21 @@ void NTPManager::setTimezone(const char* timezone) {
 }
 
 void NTPManager::loop() {
-    // Periodic re-sync check
-    if (!time_synced_ || (millis() - last_sync_millis_ > sync_interval_)) {
-        updateSyncStatus();
+    // SNTP keeps syncing in the background (configTime), so this only polls the
+    // clock. It must not block: it runs on the main loop that serves the bridge.
+    const unsigned long now = millis();
+    if (time_synced_ && (now - last_sync_millis_ <= sync_interval_))
+        return;
+    if (!time_synced_ && (now - last_sync_check_millis_ < SYNC_POLL_INTERVAL_MS))
+        return;
+    last_sync_check_millis_ = now;
 
-        if (!time_synced_) {
-            LOGD(TAG, "Attempting time re-sync...");
-            if (waitForSync(5000)) {
-                time_synced_ = true;
-                last_sync_millis_ = millis();
-                LOGI(TAG, "Time re-synchronized: %s", getFormattedTime().c_str());
-            }
-        } else {
-            last_sync_millis_ = millis();
+    const bool was_synced = time_synced_;
+    updateSyncStatus();
+    if (time_synced_) {
+        last_sync_millis_ = now;
+        if (!was_synced) {
+            LOGI(TAG, "Time synchronized: %s", getFormattedTime().c_str());
         }
     }
 }
