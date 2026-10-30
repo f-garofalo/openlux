@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+- Placeholder for future changes.
+
+## [2.0.3] - 2026-10-30
 ### Added
 - **LXP-3600 ACS compatibility notes**: the README lists the community-reported Luxpower LXP-3600 ACS / ESP32-S3 setup and its caveats (HDMI port only, 40-register read limit, registers that return exception 0x03 such as holding 560-599).
 
