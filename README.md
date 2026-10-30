@@ -304,7 +304,7 @@ nc openlux 23
 - ⚠️ Luxpower LXP-3600 ACS - ESP32-S3-DevKitC-1 clone (N16R8), HW-097 (MAX485) module, WiFi, LuxPower Modbus Integration ([#7](https://github.com/f-garofalo/openlux/issues/7)). Reads, OTA and write-multiple (0x10, [#9](https://github.com/f-garofalo/openlux/pull/9)) work, with these caveats:
   - Use the HDMI dongle port: the RJ45 "inverter interface" ports are not the monitoring RS485 bus.
   - The inverter rejects reads of more than 40 registers (exception 0x03): set the integration's **Register Block Size** to 40.
-  - Holding registers 560-599 don't exist on this model and return exception 0x03, which OpenLux forwards to the client. Input register 170 (Load Power) always reads 0.
+  - Some registers don't exist on this model and return exception 0x03, which OpenLux forwards to the client: holding 560-599, and reads starting at holding 680, holding 720 and input 170 (Load Power).
   - On this S3 clone the VIN/5V pin floats at about 2.2V when powered over USB: power the RS485 module from 3V3.
 
 **Untested/Unknown:**
