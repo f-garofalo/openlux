@@ -291,6 +291,8 @@ void RS485Manager::send_packet(const std::vector<uint8_t>& packet) {
         serial_->read();
     }
     rx_buffer_.clear();
+    // The raw reply to an earlier request must never be taken for this one.
+    last_raw_response_.clear();
 
     // Switch to transmit mode
     if (de_pin_ >= 0) {
@@ -506,10 +508,10 @@ void RS485Manager::handle_response_not_found(const std::vector<FrameInfo>& frame
 }
 
 void RS485Manager::process_response_result(const std::vector<uint8_t>& data) {
-    const bool is_serial_probe = serial_probe_pending_ &&
-                                 last_result_.function_code == ModbusFunctionCode::READ_INPUT &&
-                                 last_result_.start_address == MODBUS_INVERTER_SN_START_REG &&
-                                 last_result_.register_count >= MODBUS_INVERTER_SN_REG_COUNT;
+    const bool is_serial_probe =
+        serial_probe_pending_ && last_result_.function_code == ModbusFunctionCode::READ_INPUT &&
+        last_result_.start_address == MODBUS_INVERTER_SN_START_REG &&
+        (last_result_.is_exception || last_result_.register_count >= MODBUS_INVERTER_SN_REG_COUNT);
 
     if (last_result_.success) {
         log_successful_response();

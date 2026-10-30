@@ -3,7 +3,11 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
-- Placeholder for future changes.
+### Added
+- **LXP-3600 ACS compatibility notes**: the README lists the community-reported Luxpower LXP-3600 ACS / ESP32-S3 setup and its caveats (HDMI port only, 40-register read limit, registers that return exception 0x03 such as holding 560-599).
+
+### Fixed
+- **Inverter exception replies are matched to the request**: an exception reply (e.g. `0x83` "Illegal data value" for holding registers a model doesn't have) was never matched to the request, so OpenLux logged `Response not found` and could forward the raw reply to an earlier request to the client as if it were the answer. A CRC-valid exception with the request's function and start register is now matched and forwarded to the client; the raw reply buffer is cleared at every new request, and only a matched exception is ever forwarded as raw bytes. Reported on a Luxpower LXP-3600 ACS (#7).
 
 ## [2.0.2] - 2026-10-29
 ### Fixed
