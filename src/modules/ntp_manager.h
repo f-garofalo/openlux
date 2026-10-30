@@ -55,6 +55,7 @@ class NTPManager {
 
     bool time_synced_ = false;
     unsigned long last_sync_millis_ = 0;
+    unsigned long last_sync_check_millis_ = 0;
     unsigned long sync_interval_ = 3600000; // Re-sync every hour
 
     // Default NTP servers

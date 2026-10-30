@@ -57,18 +57,10 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
     boot_failures_++;
     prefs_.putUChar("boot_fail", boot_failures_);
     LOGI(TAG, "Boot failure counter: %u", boot_failures_);
-    if (boot_failures_ >= BOOT_FAIL_RESET_THRESHOLD) {
-#if OPENLUX_USE_ETHERNET
-        LOGW(TAG, "Exceeded boot fail threshold (%d); Ethernet mode, skipping portal",
-             BOOT_FAIL_RESET_THRESHOLD);
-#else
-        LOGW(TAG, "Exceeded boot fail threshold (%d), clearing WiFi credentials and opening portal",
-             BOOT_FAIL_RESET_THRESHOLD);
-        clearCredentials();
+    const bool boot_fail_threshold_reached = boot_failures_ >= BOOT_FAIL_RESET_THRESHOLD;
+    if (boot_fail_threshold_reached) {
+        boot_failures_ = 0;
         prefs_.putUChar("boot_fail", 0);
-        startProvisioningPortal();
-        return;
-#endif
     }
     prefs_.end();
 
@@ -81,6 +73,11 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
     LOGI(TAG, "  NET mode: %s", use_ethernet_ ? "ETH" : "WIFI");
 
 #if OPENLUX_USE_ETHERNET
+    if (boot_fail_threshold_reached) {
+        LOGW(TAG, "Exceeded boot fail threshold (%d); Ethernet mode, skipping portal",
+             BOOT_FAIL_RESET_THRESHOLD);
+    }
+
     WiFi.onEvent(
         [this](WiFiEvent_t event, WiFiEventInfo_t info) { handleEthernetEvent(event, info); },
         ARDUINO_EVENT_MAX);
@@ -116,6 +113,23 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
     configureWiFiPowerSave();
     applyWiFiTxPower("initial STA setup");
 
+    // Recovery after repeated failed boots. The portal can't change credentials
+    // compiled into the firmware, so it only runs for portal-provisioned ones.
+    // Start-up continues below either way, so the network task (OTA, TCP server,
+    // WiFi watchdog) always runs.
+    if (boot_fail_threshold_reached) {
+        if (has_ssid) {
+            LOGW(TAG,
+                 "Exceeded boot fail threshold (%d); credentials are compiled in, skipping portal",
+                 BOOT_FAIL_RESET_THRESHOLD);
+        } else {
+            LOGW(TAG,
+                 "Exceeded boot fail threshold (%d), clearing WiFi credentials and opening portal",
+                 BOOT_FAIL_RESET_THRESHOLD);
+            clearCredentials();
+            startProvisioningPortal();
+        }
+    }
 
     // Provisioning path: if no SSID provided, start captive portal
     if (!has_ssid) {
@@ -131,7 +145,10 @@ void NetworkManager::begin(const char* ssid, const char* password, const char* h
             wm.setSTAStaticIPConfig(static_ip_, gateway_, subnet_, dns1_);
         }
 
+        // The portal blocks for up to WIFI_PORTAL_TIMEOUT_S, longer than the task watchdog
+        SystemManager::getInstance().disableWatchdog();
         bool res = wm.autoConnect(WIFI_PORTAL_SSID, WIFI_PORTAL_PASS);
+        SystemManager::getInstance().enableWatchdog();
         if (!res) {
             LOGE(TAG, "WiFi portal timeout or failed connection");
         } else {
