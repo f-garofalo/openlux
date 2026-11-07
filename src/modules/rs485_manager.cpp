@@ -49,7 +49,7 @@ bool RS485Manager::is_bus_busy() const {
     //     until the line has been quiet for RS485_FOREIGN_IDLE_TAIL_MS, which
     //     bridges the foreign request->response turnaround so we never transmit
     //     into the gap and clobber the inverter's reply to the other master.
-    if ((int32_t) (bus_busy_until_ms_ - millis()) > 0)
+    if (foreign_idle_tail_remaining_ms() > 0)
         return true;
     // (2) Instant carrier sense: bytes are arriving on the line right now (a frame
     //     is mid-assembly). Closes the window between the first foreign byte and
@@ -57,6 +57,18 @@ bool RS485Manager::is_bus_busy() const {
     if (!rx_buffer_.empty() && (millis() - last_rx_time_) <= MODBUS_INTER_FRAME_DELAY_MS)
         return true;
     return false;
+}
+
+uint32_t RS485Manager::foreign_idle_tail_remaining_ms() const {
+    if (!foreign_tail_active_)
+        return 0;
+    const uint32_t elapsed = millis() - last_foreign_frame_ms_;
+    return elapsed < RS485_FOREIGN_IDLE_TAIL_MS ? RS485_FOREIGN_IDLE_TAIL_MS - elapsed : 0;
+}
+
+void RS485Manager::note_foreign_frame() {
+    last_foreign_frame_ms_ = millis();
+    foreign_tail_active_ = true;
 }
 
 void RS485Manager::begin(HardwareSerial& serial, int8_t tx_pin, int8_t rx_pin, int8_t de_pin,
@@ -155,6 +167,11 @@ void RS485Manager::loop() {
     // send_read_request()/send_write_request() and the probe, so we never transmit
     // on a busy bus.
 
+    // Close an expired idle-tail, so a frame seen once does not read as "busy"
+    // again when millis() - last_foreign_frame_ms_ wraps after ~49.7 days.
+    if (foreign_tail_active_ && foreign_idle_tail_remaining_ms() == 0)
+        foreign_tail_active_ = false;
+
     // Auto-probe when link is down
     if (!inverter_link_ok_ && !serial_probe_pending_ && !waiting_response_ &&
         millis() >= next_serial_probe_ms_) {
@@ -179,7 +196,7 @@ bool RS485Manager::send_read_request(ModbusFunctionCode func, uint16_t start_reg
     // If external device is using the bus, wait for it to finish
     if (is_bus_busy()) {
         LOGI(TAG, "Cannot send request now: RS485_BUS_BUSY for %lums (external device active)",
-             bus_busy_until_ms_ - millis());
+             (unsigned long) foreign_idle_tail_remaining_ms());
         return false;
     }
     // ========== END BUS BUSY CHECK ==========
@@ -225,7 +242,7 @@ bool RS485Manager::send_write_request(uint16_t start_reg, const std::vector<uint
     if (is_bus_busy()) {
         LOGW(TAG,
              "⚠ Cannot send write request now: RS485_BUS_BUSY for %lums (external device active)",
-             bus_busy_until_ms_ - millis());
+             (unsigned long) foreign_idle_tail_remaining_ms());
         return false;
     }
     // ========== END BUS BUSY CHECK ==========
@@ -335,7 +352,7 @@ bool RS485Manager::should_ignore_packet(const std::vector<uint8_t>& data) {
         }
         // Foreign frame seen: refresh the idle-tail so the bus stays busy until the
         // line is quiet for RS485_FOREIGN_IDLE_TAIL_MS (covers the upcoming reply).
-        bus_busy_until_ms_ = millis() + RS485_FOREIGN_IDLE_TAIL_MS;
+        note_foreign_frame();
         ignored_packets_++;
         return true;
     }
@@ -345,7 +362,7 @@ bool RS485Manager::should_ignore_packet(const std::vector<uint8_t>& data) {
     // activity, so refresh the idle-tail too.
     if (!waiting_response_) {
         LOGD(TAG, "Ignoring foreign frame while not awaiting our response");
-        bus_busy_until_ms_ = millis() + RS485_FOREIGN_IDLE_TAIL_MS;
+        note_foreign_frame();
         ignored_packets_++;
         return true;
     }
@@ -449,6 +466,9 @@ void RS485Manager::handle_response(const std::vector<uint8_t>& data) {
     std::vector<FrameInfo> frames = InverterProtocol::parse_all_frames(data);
 
     if (frames.empty()) {
+        // Start from a clean result: a stale is_exception from the previous
+        // transaction would make the bridge forward these bytes as an exception.
+        last_result_ = ParseResult();
         last_result_.success = false;
         last_result_.error_message = "No valid frames found in response";
         last_raw_response_ = data;
@@ -488,6 +508,7 @@ void RS485Manager::handle_response(const std::vector<uint8_t>& data) {
 }
 
 void RS485Manager::handle_response_not_found(const std::vector<FrameInfo>& frames) {
+    last_result_ = ParseResult();
     last_result_.success = false;
     last_result_.error_message = "Response not found (traffic from other master?)";
     last_result_.function_code = expected_function_code_;

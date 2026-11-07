@@ -153,6 +153,20 @@ TcpParseResult TcpProtocol::parse_request(const uint8_t* data, size_t length) {
            TCP_PROTO_DONGLE_SERIAL_LEN);
     result.start_register = parse_little_endian_uint16(data, TcpProtocolOffsets::ABS_START_REG);
 
+    // Only the function codes the inverter implements. Anything else would fall
+    // through to the read path below and reach the inverter as a "read".
+    switch (static_cast<ModbusFunctionCode>(result.function_code)) {
+        case ModbusFunctionCode::READ_HOLDING:
+        case ModbusFunctionCode::READ_INPUT:
+        case ModbusFunctionCode::WRITE_SINGLE:
+        case ModbusFunctionCode::WRITE_MULTI:
+            break;
+        default:
+            result.error_message = "Unsupported Modbus function";
+            LOGW(TAG, "%s: 0x%02X", result.error_message.c_str(), result.function_code);
+            return result;
+    }
+
     // Determine if this is a write operation
     result.is_write_operation = (result.function_code == 0x06 || result.function_code == 0x10);
 

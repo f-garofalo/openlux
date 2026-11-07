@@ -94,6 +94,8 @@ class RS485Manager {
     // ========== Utilities ==========
     static const char* function_code_to_string(ModbusFunctionCode func);
     bool is_bus_busy() const;
+    uint32_t foreign_idle_tail_remaining_ms() const;
+    void note_foreign_frame();
 
     // ========== Hardware ==========
     HardwareSerial* serial_ = nullptr;
@@ -133,5 +135,9 @@ class RS485Manager {
     uint32_t ignored_packets_ = 0;
 
     uint32_t external_requests_detected_ = 0;
-    uint32_t bus_busy_until_ms_ = 0;
+
+    // Idle-tail after the last foreign frame. Stored as a start time and compared
+    // by elapsed time so it stays correct across the millis() wraparound.
+    uint32_t last_foreign_frame_ms_ = 0;
+    bool foreign_tail_active_ = false;
 };
