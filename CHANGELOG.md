@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+- Placeholder for future changes.
+
+## [2.0.4] - 2026-11-07
 ### Fixed
 - **RS485 requests stopped after 24.8 days of uptime**: the foreign-traffic idle-tail check introduced in 2.0.1 compared a deadline with a signed difference. With OpenLux as the only master on the bus that deadline stayed at 0, so from `millis()` = 2^31 (24.8 days) until the counter wrapped (49.7 days) the bus always read as busy and no request reached the inverter. The idle-tail is now stored as the time of the last foreign frame and checked by elapsed time, which is correct across the wraparound.
 - **Device stayed offline after 5 failed boots**: when the boot-failure threshold was reached, `begin()` opened the provisioning portal and then returned without starting the network task, so after the portal timed out there was no TCP server, OTA or WiFi watchdog until a power cycle. A router outage of about 50 minutes was enough (the WiFi watchdog reboots every 10 minutes). Start-up now always continues. With credentials compiled into the firmware the portal is skipped, since it cannot change them. The first-boot portal now pauses the 30 s task watchdog, as the recovery portal already did.
